@@ -35,6 +35,7 @@
 	};
 
 	sps_gpios {
+		compatible = "sps,gpio-signals";
 		utility_pwr_led: utility-pwr-led {
 			gpios = <&gpio2 4 GPIO_ACTIVE_LOW>;
 		};

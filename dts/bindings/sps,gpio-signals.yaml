@@ -1,0 +1,13 @@
+description: Smart power socket GPIO signal group
+
+compatible: "sps,gpio-signals"
+
+child-binding:
+  description: GPIO signal
+  properties:
+    gpios:
+      type: phandle-array
+      required: true
+
+    label:
+      type: string
