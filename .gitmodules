@@ -1,0 +1,3 @@
+[submodule "src/sensors/externalLibs/hlw811x"]
+	path = src/sensors/externalLibs/hlw811x
+	url = https://github.com/libmcu/hlw811x.git
