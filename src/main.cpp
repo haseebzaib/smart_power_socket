@@ -13,7 +13,7 @@
 
 hardware::gpioCon utilityPwrLed(GPIO_DT_SPEC_GET(DT_ALIAS(utility_pwr_led), gpios), GPIO_OUTPUT_HIGH);
 hardware::gpioCon cellularLed(GPIO_DT_SPEC_GET(DT_ALIAS(cellular_led), gpios), GPIO_OUTPUT_HIGH);
-hardware::gpioCon gsmPwrKey(GPIO_DT_SPEC_GET(DT_ALIAS(gsm_pwrkey), gpios), GPIO_OUTPUT_HIGH);
+hardware::gpioCon gsmPwrKey(GPIO_DT_SPEC_GET(DT_ALIAS(gsm_pwrkey), gpios), GPIO_OUTPUT_LOW);
 hardware::uartCon gsmUart(DEVICE_DT_GET(DT_ALIAS(gsm_uart)));
 sensors::hlw811x energyMeters(
 	DEVICE_DT_GET(DT_ALIAS(hlw_uart)),
