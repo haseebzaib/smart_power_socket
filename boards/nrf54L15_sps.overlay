@@ -65,7 +65,7 @@
 		};
 
 		gsm_dtr: gsm-dtr {
-			gpios = <&gpio1 7 GPIO_ACTIVE_LOW>;
+			gpios = <&gpio1 7 GPIO_ACTIVE_HIGH>;
 		};
 
 		gsm_pwrkey: gsm-pwrkey {
