@@ -86,12 +86,12 @@ static bool gsmCommand(const char *command, uint32_t timeoutMs, const char *expe
 
 static bool gsmTryAt()
 {
-	if (gsmCommand("AT\r\n", 5000)) {
+	if (gsmCommand("AT\r\n", 8000)) {
 		return true;
 	}
 
 	k_msleep(200);
-	return gsmCommand("AT\r\n", 5000);
+	return gsmCommand("AT\r\n", 8000);
 }
 
 static bool gsmFindBaud(uint32_t &baudrate)
@@ -116,35 +116,38 @@ static void gsmPowerPulse()
 	gsmPwrKey.set(0);
 	k_msleep(4000);
 	gsmPwrKey.set(1);
+	k_msleep(6000);
 }
 
 static void gsmBasicInit()
 {
 	uint32_t detectedBaud = 0;
 
-	if (!gsmFindBaud(detectedBaud)) {
-		std::cout << "GSM no AT response, pulsing PWRKEY" << std::endl;
-		gsmPowerPulse();
-		k_msleep(10000);
+	// if (!gsmFindBaud(detectedBaud)) {
+	// 	std::cout << "GSM no AT response, pulsing PWRKEY" << std::endl;
+	// 	gsmPowerPulse();
+	// 	k_msleep(10000);
 
-		if (!gsmFindBaud(detectedBaud)) {
-			std::cout << "GSM still no AT response after PWRKEY" << std::endl;
-			return;
-		}
-	}
+	// 	if (!gsmFindBaud(detectedBaud)) {
+	// 		std::cout << "GSM still no AT response after PWRKEY" << std::endl;
+	// 		return;
+	// 	}
+	// }
+
+	gsmPowerPulse();
 
 	std::cout << "GSM AT OK at baud " << detectedBaud << std::endl;
 	gsmCommand("AT+IPR?\r\n", 5000);
 
 	if (detectedBaud != 115200) {
-		if (gsmCommand("AT+IPR=115200\r\n", 5000)) {
+		if (gsmCommand("AT+IPR=115200\r\n", 8000)) {
 			k_msleep(200);
 			gsmUart.configureBaud(115200);
 			gsmTryAt();
 		}
 	}
 
-	gsmCommand("ATE1\r\n", 5000);
+	gsmCommand("ATE1\r\n", 8000);
 }
 
 int main(void)
