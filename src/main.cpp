@@ -13,7 +13,7 @@
 
 hardware::gpioCon utilityPwrLed(GPIO_DT_SPEC_GET(DT_ALIAS(utility_pwr_led), gpios), GPIO_OUTPUT_HIGH);
 hardware::gpioCon cellularLed(GPIO_DT_SPEC_GET(DT_ALIAS(cellular_led), gpios), GPIO_OUTPUT_HIGH);
-hardware::gpioCon gsmPwrKey(GPIO_DT_SPEC_GET(DT_ALIAS(gsm_pwrkey), gpios), GPIO_OUTPUT_LOW);
+hardware::gpioCon gsmPwrKey(GPIO_DT_SPEC_GET(DT_ALIAS(gsm_pwrkey), gpios), GPIO_OUTPUT_HIGH);
 hardware::uartCon gsmUart(DEVICE_DT_GET(DT_ALIAS(gsm_uart)));
 sensors::hlw811x energyMeters(
 	DEVICE_DT_GET(DT_ALIAS(hlw_uart)),
@@ -159,8 +159,8 @@ int main(void)
 	gsmPwrKey.init();
 	int gsmUartInit = gsmUart.init();
 	std::cout << "GSM UART init: " << gsmUartInit << std::endl;
-	gsmBasicInit();
-
+	//gsmBasicInit();
+gsmPowerPulse();
 	int ret = energyMeters.init();
 	std::cout << "HLW811x init: " << ret << std::endl;
 
@@ -174,7 +174,19 @@ int main(void)
 		std::cout << "HLW811x meter 1 sys status err=" << err
 				  << " value=0x" << std::hex << sysStatus << std::dec << std::endl;
 
-		gsmTryAt();
+				constexpr uint8_t atCmd[] = {'A', 'T', '\r', '\n'};
+		uint8_t gsmRx[128] = {};
+
+		gsmUart.flushRx();
+		int gsmTx = gsmUart.write(std::span<const uint8_t>(atCmd, sizeof(atCmd)));
+		int gsmRxLen = gsmUart.read(std::span<uint8_t>(gsmRx, sizeof(gsmRx)), 10000);
+
+		std::cout << "GSM AT tx=" << gsmTx << " rx=" << gsmRxLen << " ";
+		for (int i = 0; i < gsmRxLen; ++i)
+		{
+			std::cout << static_cast<char>(gsmRx[i]);
+		}
+		std::cout << std::endl;
 
 		k_msleep(3000);
 	}
