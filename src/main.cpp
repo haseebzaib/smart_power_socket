@@ -13,6 +13,7 @@
 
 hardware::gpioCon utilityPwrLed(GPIO_DT_SPEC_GET(DT_ALIAS(utility_pwr_led), gpios), GPIO_OUTPUT_HIGH);
 hardware::gpioCon cellularLed(GPIO_DT_SPEC_GET(DT_ALIAS(cellular_led), gpios), GPIO_OUTPUT_HIGH);
+hardware::gpioCon relay4(GPIO_DT_SPEC_GET(DT_ALIAS(relay4), gpios), GPIO_OUTPUT_INACTIVE);
 hardware::gpioCon gsmDtr(GPIO_DT_SPEC_GET(DT_ALIAS(gsm_dtr), gpios), GPIO_OUTPUT_INACTIVE);
 hardware::gpioCon gsmPwrKey(GPIO_DT_SPEC_GET(DT_ALIAS(gsm_pwrkey), gpios), GPIO_OUTPUT_INACTIVE);
 hardware::uartCon gsmUart(DEVICE_DT_GET(DT_ALIAS(gsm_uart)));
@@ -157,6 +158,7 @@ int main(void)
 
 	utilityPwrLed.init();
 	cellularLed.init();
+	relay4.init();
 	gsmDtr.init();
 	gsmPwrKey.init();
 	int gsmUartInit = gsmUart.init();
@@ -172,6 +174,7 @@ gsmPowerPulse();
 	{
 		// utilityPwrLed.toggle();
 		// cellularLed.toggle();
+		relay4.toggle();
 		hlw811x_error_t err = energyMeters.readSysStatus(4, sysStatus);
 		std::cout << "HLW811x meter 1 sys status err=" << err
 				  << " value=0x" << std::hex << sysStatus << std::dec << std::endl;
