@@ -11,6 +11,7 @@
 
 hardware::gpioCon utilityPwrLed(GPIO_DT_SPEC_GET(DT_ALIAS(utility_pwr_led), gpios), GPIO_OUTPUT);
 hardware::gpioCon cellularLed(GPIO_DT_SPEC_GET(DT_ALIAS(cellular_led), gpios), GPIO_OUTPUT);
+hardware::gpioCon gsmPwrKey(GPIO_DT_SPEC_GET(DT_ALIAS(gsm_pwrkey), gpios), GPIO_OUTPUT);
 sensors::hlw811x energyMeters(
 	DEVICE_DT_GET(DT_ALIAS(hlw_uart)),
 	GPIO_DT_SPEC_GET(DT_ALIAS(energy_metering_mux_a), gpios),
@@ -23,6 +24,13 @@ int main(void)
 
 	utilityPwrLed.init();
 	cellularLed.init();
+	gsmPwrKey.init();
+
+	gsmPwrKey.set(1);
+	k_msleep(4000);
+	gsmPwrKey.set(0);
+	k_msleep(6000);
+
 	int ret = energyMeters.init();
 	std::cout << "HLW811x init: " << ret << std::endl;
 
