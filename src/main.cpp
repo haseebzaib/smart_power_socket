@@ -154,7 +154,7 @@ static void gsmBasicInit()
 
 int main(void)
 {
-	std::cout << "Hello, C++ world! " << CONFIG_BOARD << std::endl;
+	
 
 	utilityPwrLed.init();
 	cellularLed.init();
