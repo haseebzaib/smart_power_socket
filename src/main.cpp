@@ -10,8 +10,8 @@
 #include "hardware/uart_con.hpp"
 #include "sensors/hlw811x.hpp"
 
-hardware::gpioCon utilityPwrLed(GPIO_DT_SPEC_GET(DT_ALIAS(utility_pwr_led), gpios), GPIO_OUTPUT);
-hardware::gpioCon cellularLed(GPIO_DT_SPEC_GET(DT_ALIAS(cellular_led), gpios), GPIO_OUTPUT);
+hardware::gpioCon utilityPwrLed(GPIO_DT_SPEC_GET(DT_ALIAS(utility_pwr_led), gpios), GPIO_OUTPUT_HIGH);
+hardware::gpioCon cellularLed(GPIO_DT_SPEC_GET(DT_ALIAS(cellular_led), gpios), GPIO_OUTPUT_HIGH);
 hardware::gpioCon gsmPwrKey(GPIO_DT_SPEC_GET(DT_ALIAS(gsm_pwrkey), gpios), GPIO_OUTPUT_HIGH);
 hardware::uartCon gsmUart(DEVICE_DT_GET(DT_ALIAS(gsm_uart)));
 sensors::hlw811x energyMeters(
@@ -43,8 +43,8 @@ int main(void)
 
 	while (1)
 	{
-		utilityPwrLed.toggle();
-		cellularLed.toggle();
+		// utilityPwrLed.toggle();
+		// cellularLed.toggle();
 		hlw811x_error_t err = energyMeters.readSysStatus(1, sysStatus);
 		std::cout << "HLW811x meter 1 sys status err=" << err
 				  << " value=0x" << std::hex << sysStatus << std::dec << std::endl;
@@ -54,7 +54,7 @@ int main(void)
 
 		gsmUart.flushRx();
 		int gsmTx = gsmUart.write(std::span<const uint8_t>(atCmd, sizeof(atCmd)));
-		int gsmRxLen = gsmUart.read(std::span<uint8_t>(gsmRx, sizeof(gsmRx)), 1000);
+		int gsmRxLen = gsmUart.read(std::span<uint8_t>(gsmRx, sizeof(gsmRx)), 10000);
 
 		std::cout << "GSM AT tx=" << gsmTx << " rx=" << gsmRxLen << " ";
 		for (int i = 0; i < gsmRxLen; ++i)
