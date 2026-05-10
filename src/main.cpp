@@ -174,7 +174,7 @@ gsmPowerPulse();
 	{
 		// utilityPwrLed.toggle();
 		// cellularLed.toggle();
-		relay4.toggle();
+		//relay4.toggle();
 		hlw811x_error_t err = energyMeters.readSysStatus(4, sysStatus);
 		std::cout << "HLW811x meter 1 sys status err=" << err
 				  << " value=0x" << std::hex << sysStatus << std::dec << std::endl;
