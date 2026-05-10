@@ -1,199 +1,258 @@
 /*
- * Copyright (c) 2023, Meta
- *
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <iostream>
-#include <cstring>
+#include <zephyr/device.h>
+#include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>
-#include "hardware/gpio_con.hpp"
-#include "hardware/uart_con.hpp"
-#include "sensors/hlw811x.hpp"
+#include <zephyr/sys/printk.h>
 
-hardware::gpioCon utilityPwrLed(GPIO_DT_SPEC_GET(DT_ALIAS(utility_pwr_led), gpios), GPIO_OUTPUT_HIGH);
-hardware::gpioCon cellularLed(GPIO_DT_SPEC_GET(DT_ALIAS(cellular_led), gpios), GPIO_OUTPUT_HIGH);
-hardware::gpioCon relay4(GPIO_DT_SPEC_GET(DT_ALIAS(relay4), gpios), GPIO_OUTPUT_INACTIVE);
-hardware::gpioCon gsmDtr(GPIO_DT_SPEC_GET(DT_ALIAS(gsm_dtr), gpios), GPIO_OUTPUT_INACTIVE);
-hardware::gpioCon gsmPwrKey(GPIO_DT_SPEC_GET(DT_ALIAS(gsm_pwrkey), gpios), GPIO_OUTPUT_INACTIVE);
-hardware::uartCon gsmUart(DEVICE_DT_GET(DT_ALIAS(gsm_uart)));
-sensors::hlw811x energyMeters(
-	DEVICE_DT_GET(DT_ALIAS(hlw_uart)),
-	GPIO_DT_SPEC_GET(DT_ALIAS(energy_metering_mux_a), gpios),
-	GPIO_DT_SPEC_GET(DT_ALIAS(energy_metering_mux_b), gpios),
-	4);
+#include <stddef.h>
+#include <stdint.h>
 
-static bool bufferContains(const uint8_t *buffer, int length, const char *needle)
+#define GSM_UART_NODE DT_ALIAS(gsm_uart)
+#define HLW_UART_NODE DT_ALIAS(hlw_uart)
+
+static const gpio_dt_spec gsm_pwrkey =
+	GPIO_DT_SPEC_GET(DT_ALIAS(gsm_pwrkey), gpios);
+static const gpio_dt_spec gsm_dtr =
+	GPIO_DT_SPEC_GET(DT_ALIAS(gsm_dtr), gpios);
+static const gpio_dt_spec relay4 =
+	GPIO_DT_SPEC_GET(DT_ALIAS(relay4), gpios);
+static const gpio_dt_spec hlw_mux_a =
+	GPIO_DT_SPEC_GET(DT_ALIAS(energy_metering_mux_a), gpios);
+static const gpio_dt_spec hlw_mux_b =
+	GPIO_DT_SPEC_GET(DT_ALIAS(energy_metering_mux_b), gpios);
+
+struct async_uart_test {
+	const device *dev;
+	const char *name;
+	uint8_t rx_buf[2][64];
+	uint8_t next_buf;
+	volatile bool tx_busy;
+};
+
+static async_uart_test gsm_uart = {
+	.dev = DEVICE_DT_GET(GSM_UART_NODE),
+	.name = "GSM",
+};
+
+static async_uart_test hlw_uart = {
+	.dev = DEVICE_DT_GET(HLW_UART_NODE),
+	.name = "HLW",
+};
+
+static void print_bytes(const char *name, const uint8_t *data, size_t len)
 {
-	const int needleLength = static_cast<int>(std::strlen(needle));
+	printk("%s RX len=%u text=\"", name, static_cast<unsigned int>(len));
 
-	if (needleLength == 0 || length < needleLength) {
-		return false;
-	}
-
-	for (int i = 0; i <= length - needleLength; ++i) {
-		bool matched = true;
-
-		for (int j = 0; j < needleLength; ++j) {
-			if (buffer[i + j] != static_cast<uint8_t>(needle[j])) {
-				matched = false;
-				break;
-			}
-		}
-
-		if (matched) {
-			return true;
-		}
-	}
-
-	return false;
-}
-
-static void printRx(const char *label, const uint8_t *buffer, int length)
-{
-	std::cout << label << " rx=" << length << " ";
-
-	for (int i = 0; i < length; ++i) {
-		const uint8_t c = buffer[i];
+	for (size_t i = 0; i < len; ++i) {
+		const uint8_t c = data[i];
 
 		if (c >= 0x20 && c <= 0x7e) {
-			std::cout << static_cast<char>(c);
+			printk("%c", c);
 		} else if (c == '\r') {
-			std::cout << "\\r";
+			printk("\\r");
 		} else if (c == '\n') {
-			std::cout << "\\n";
+			printk("\\n");
 		} else {
-			std::cout << "\\x" << std::hex << static_cast<int>(c) << std::dec;
+			printk("\\x%02x", c);
 		}
 	}
 
-	std::cout << std::endl;
-}
-
-static bool gsmCommand(const char *command, uint32_t timeoutMs, const char *expect = "OK")
-{
-	uint8_t rx[256] = {};
-
-	gsmUart.flushRx();
-	int tx = gsmUart.write(std::span<const uint8_t>(
-		reinterpret_cast<const uint8_t *>(command), std::strlen(command)));
-	k_msleep(50);
-	int rxLength = gsmUart.read(std::span<uint8_t>(rx, sizeof(rx)), timeoutMs);
-
-	std::cout << "GSM cmd tx=" << tx << " cmd=" << command;
-	printRx("GSM", rx, rxLength);
-
-	return bufferContains(rx, rxLength, expect);
-}
-
-static bool gsmTryAt()
-{
-	if (gsmCommand("AT\r\n", 8000)) {
-		return true;
+	printk("\" hex=");
+	for (size_t i = 0; i < len; ++i) {
+		printk("%02x ", data[i]);
 	}
-
-	k_msleep(200);
-	return gsmCommand("AT\r\n", 8000);
+	printk("\n");
 }
 
-static bool gsmFindBaud(uint32_t &baudrate)
+static void uart_cb(const device *dev, uart_event *evt, void *user_data)
 {
-	const uint32_t baudrates[] = {115200, 9600, 57600, 38400, 19200};
+	async_uart_test *ctx = static_cast<async_uart_test *>(user_data);
 
-	for (uint32_t baud : baudrates) {
-		int ret = gsmUart.configureBaud(baud);
-		std::cout << "GSM baud " << baud << " configure ret=" << ret << std::endl;
+	switch (evt->type) {
+	case UART_TX_DONE:
+		ctx->tx_busy = false;
+		printk("%s TX done len=%u\n", ctx->name,
+		       static_cast<unsigned int>(evt->data.tx.len));
+		break;
 
-		if (ret == 0 && gsmTryAt()) {
-			baudrate = baud;
-			return true;
+	case UART_TX_ABORTED:
+		ctx->tx_busy = false;
+		printk("%s TX aborted\n", ctx->name);
+		break;
+
+	case UART_RX_RDY:
+		print_bytes(ctx->name,
+			    evt->data.rx.buf + evt->data.rx.offset,
+			    evt->data.rx.len);
+		break;
+
+	case UART_RX_BUF_REQUEST: {
+		uint8_t index = ctx->next_buf;
+		ctx->next_buf = ctx->next_buf ? 0 : 1;
+		int ret = uart_rx_buf_rsp(dev, ctx->rx_buf[index],
+					  sizeof(ctx->rx_buf[index]));
+		if (ret != 0) {
+			printk("%s RX buf rsp failed %d\n", ctx->name, ret);
 		}
+		break;
 	}
 
-	return false;
+	case UART_RX_BUF_RELEASED:
+		break;
+
+	case UART_RX_DISABLED:
+		printk("%s RX disabled\n", ctx->name);
+		break;
+
+	case UART_RX_STOPPED:
+		printk("%s RX stopped reason=%d\n", ctx->name,
+		       evt->data.rx_stop.reason);
+		break;
+
+	default:
+		printk("%s UART event %d\n", ctx->name, evt->type);
+		break;
+	}
 }
 
-static void gsmPowerPulse()
+static int async_uart_init(async_uart_test *ctx, uint32_t baudrate)
 {
-	gsmPwrKey.set(1);
+	if (!device_is_ready(ctx->dev)) {
+		printk("%s UART not ready\n", ctx->name);
+		return -ENODEV;
+	}
+
+	const uart_config config = {
+		.baudrate = baudrate,
+		.parity = UART_CFG_PARITY_NONE,
+		.stop_bits = UART_CFG_STOP_BITS_1,
+		.data_bits = UART_CFG_DATA_BITS_8,
+		.flow_ctrl = UART_CFG_FLOW_CTRL_NONE,
+	};
+
+	int ret = uart_configure(ctx->dev, &config);
+	if (ret != 0) {
+		printk("%s uart_configure failed %d\n", ctx->name, ret);
+		return ret;
+	}
+
+	ret = uart_callback_set(ctx->dev, uart_cb, ctx);
+	if (ret != 0) {
+		printk("%s uart_callback_set failed %d\n", ctx->name, ret);
+		return ret;
+	}
+
+	ctx->next_buf = 1;
+	ctx->tx_busy = false;
+
+	ret = uart_rx_enable(ctx->dev, ctx->rx_buf[0], sizeof(ctx->rx_buf[0]),
+			     10000);
+	if (ret != 0) {
+		printk("%s uart_rx_enable failed %d\n", ctx->name, ret);
+	}
+
+	return ret;
+}
+
+static int async_uart_send(async_uart_test *ctx, const uint8_t *data, size_t len)
+{
+	if (ctx->tx_busy) {
+		printk("%s TX busy\n", ctx->name);
+		return -EBUSY;
+	}
+
+	ctx->tx_busy = true;
+	int ret = uart_tx(ctx->dev, data, len, SYS_FOREVER_US);
+	if (ret != 0) {
+		ctx->tx_busy = false;
+		printk("%s uart_tx failed %d\n", ctx->name, ret);
+	}
+
+	return ret;
+}
+
+static int gpio_init_output(const gpio_dt_spec *gpio, gpio_flags_t flags)
+{
+	if (!gpio_is_ready_dt(gpio)) {
+		return -ENODEV;
+	}
+
+	return gpio_pin_configure_dt(gpio, flags);
+}
+
+static void gsm_power_pulse()
+{
+	gpio_pin_set_dt(&gsm_pwrkey, 1);
 	k_msleep(4000);
-	gsmPwrKey.set(0);
+	gpio_pin_set_dt(&gsm_pwrkey, 0);
 	k_msleep(10000);
 }
 
-static void gsmBasicInit()
+static int hlw_select_meter(uint8_t meter)
 {
-	uint32_t detectedBaud = 0;
-
-	// if (!gsmFindBaud(detectedBaud)) {
-	// 	std::cout << "GSM no AT response, pulsing PWRKEY" << std::endl;
-	// 	gsmPowerPulse();
-	// 	k_msleep(10000);
-
-	// 	if (!gsmFindBaud(detectedBaud)) {
-	// 		std::cout << "GSM still no AT response after PWRKEY" << std::endl;
-	// 		return;
-	// 	}
-	// }
-
-	gsmPowerPulse();
-
-	std::cout << "GSM AT OK at baud " << detectedBaud << std::endl;
-	gsmCommand("AT+IPR?\r\n", 5000);
-
-	if (detectedBaud != 115200) {
-		if (gsmCommand("AT+IPR=115200\r\n", 8000)) {
-			k_msleep(200);
-			gsmUart.configureBaud(115200);
-			gsmTryAt();
-		}
+	if (meter < 1 || meter > 4) {
+		return -EINVAL;
 	}
 
-	gsmCommand("ATE1\r\n", 8000);
+	const uint8_t index = meter - 1;
+	int ret = gpio_pin_set_dt(&hlw_mux_a, index & 0x01);
+	if (ret != 0) {
+		return ret;
+	}
+
+	ret = gpio_pin_set_dt(&hlw_mux_b, (index >> 1) & 0x01);
+	if (ret != 0) {
+		return ret;
+	}
+
+	k_busy_wait(10);
+	return 0;
 }
 
 int main(void)
 {
-	std::cout << "Hello, C++ world! " << CONFIG_BOARD << std::endl;
+	printk("Async UART test on %s\n", CONFIG_BOARD);
 
-	utilityPwrLed.init();
-	cellularLed.init();
-	relay4.init();
-	gsmDtr.init();
-	gsmPwrKey.init();
-	int gsmUartInit = gsmUart.init();
-	std::cout << "GSM UART init: " << gsmUartInit << std::endl;
-	//gsmBasicInit();
-gsmPowerPulse();
-	int ret = energyMeters.init();
-	std::cout << "HLW811x init: " << ret << std::endl;
+	int ret = gpio_init_output(&gsm_pwrkey, GPIO_OUTPUT_INACTIVE);
+	printk("GSM PWRKEY init %d\n", ret);
 
-	uint16_t sysStatus = 0;
+	ret = gpio_init_output(&gsm_dtr, GPIO_OUTPUT_INACTIVE);
+	printk("GSM DTR init %d\n", ret);
 
-	while (1)
-	{
-		// utilityPwrLed.toggle();
-		// cellularLed.toggle();
-		//relay4.toggle();
-		hlw811x_error_t err = energyMeters.readSysStatus(4, sysStatus);
-		std::cout << "HLW811x meter 1 sys status err=" << err
-				  << " value=0x" << std::hex << sysStatus << std::dec << std::endl;
+	ret = gpio_init_output(&relay4, GPIO_OUTPUT_INACTIVE);
+	printk("Relay4 init %d\n", ret);
 
-				constexpr uint8_t atCmd[] = {'A', 'T', '\r', '\n'};
-		uint8_t gsmRx[128] = {};
+	ret = gpio_init_output(&hlw_mux_a, GPIO_OUTPUT_INACTIVE);
+	printk("HLW mux A init %d\n", ret);
 
-		gsmUart.flushRx();
-		int gsmTx = gsmUart.write(std::span<const uint8_t>(atCmd, sizeof(atCmd)));
-		int gsmRxLen = gsmUart.read(std::span<uint8_t>(gsmRx, sizeof(gsmRx)), 10000);
+	ret = gpio_init_output(&hlw_mux_b, GPIO_OUTPUT_INACTIVE);
+	printk("HLW mux B init %d\n", ret);
 
-		std::cout << "GSM AT tx=" << gsmTx << " rx=" << gsmRxLen << " ";
-		for (int i = 0; i < gsmRxLen; ++i)
-		{
-			std::cout << static_cast<char>(gsmRx[i]);
-		}
-		std::cout << std::endl;
+	gsm_power_pulse();
 
-		k_msleep(3000);
+	ret = async_uart_init(&gsm_uart, 9600);
+	printk("GSM async UART init %d\n", ret);
+
+	ret = async_uart_init(&hlw_uart, 9600);
+	printk("HLW async UART init %d\n", ret);
+
+	const uint8_t gsm_at[] = {'A', 'T', '\r', '\n'};
+	const uint8_t hlw_sys_status[] = {0xa5, 0x43};
+
+	while (true) {
+		gpio_pin_toggle_dt(&relay4);
+
+		printk("Sending GSM AT\n");
+		async_uart_send(&gsm_uart, gsm_at, sizeof(gsm_at));
+
+		hlw_select_meter(4);
+		printk("Sending HLW SYS_STATUS read to meter 4\n");
+		async_uart_send(&hlw_uart, hlw_sys_status, sizeof(hlw_sys_status));
+
+		k_sleep(K_SECONDS(3));
 	}
-	return 0;
 }
