@@ -27,6 +27,7 @@ namespace hardware {
 
         
         int init();
+        int configureBaud(uint32_t baudrate);
         int read(std::span<uint8_t>buffer, uint32_t timeOutMs);
         int flushRx();
         int readIntr();

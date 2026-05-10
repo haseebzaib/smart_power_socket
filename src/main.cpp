@@ -5,6 +5,7 @@
  */
 
 #include <iostream>
+#include <cstring>
 #include <zephyr/kernel.h>
 #include "hardware/gpio_con.hpp"
 #include "hardware/uart_con.hpp"
@@ -20,6 +21,132 @@ sensors::hlw811x energyMeters(
 	GPIO_DT_SPEC_GET(DT_ALIAS(energy_metering_mux_b), gpios),
 	4);
 
+static bool bufferContains(const uint8_t *buffer, int length, const char *needle)
+{
+	const int needleLength = static_cast<int>(std::strlen(needle));
+
+	if (needleLength == 0 || length < needleLength) {
+		return false;
+	}
+
+	for (int i = 0; i <= length - needleLength; ++i) {
+		bool matched = true;
+
+		for (int j = 0; j < needleLength; ++j) {
+			if (buffer[i + j] != static_cast<uint8_t>(needle[j])) {
+				matched = false;
+				break;
+			}
+		}
+
+		if (matched) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+static void printRx(const char *label, const uint8_t *buffer, int length)
+{
+	std::cout << label << " rx=" << length << " ";
+
+	for (int i = 0; i < length; ++i) {
+		const uint8_t c = buffer[i];
+
+		if (c >= 0x20 && c <= 0x7e) {
+			std::cout << static_cast<char>(c);
+		} else if (c == '\r') {
+			std::cout << "\\r";
+		} else if (c == '\n') {
+			std::cout << "\\n";
+		} else {
+			std::cout << "\\x" << std::hex << static_cast<int>(c) << std::dec;
+		}
+	}
+
+	std::cout << std::endl;
+}
+
+static bool gsmCommand(const char *command, uint32_t timeoutMs, const char *expect = "OK")
+{
+	uint8_t rx[256] = {};
+
+	gsmUart.flushRx();
+	int tx = gsmUart.write(std::span<const uint8_t>(
+		reinterpret_cast<const uint8_t *>(command), std::strlen(command)));
+	k_msleep(50);
+	int rxLength = gsmUart.read(std::span<uint8_t>(rx, sizeof(rx)), timeoutMs);
+
+	std::cout << "GSM cmd tx=" << tx << " cmd=" << command;
+	printRx("GSM", rx, rxLength);
+
+	return bufferContains(rx, rxLength, expect);
+}
+
+static bool gsmTryAt()
+{
+	if (gsmCommand("AT\r\n", 5000)) {
+		return true;
+	}
+
+	k_msleep(200);
+	return gsmCommand("AT\r\n", 5000);
+}
+
+static bool gsmFindBaud(uint32_t &baudrate)
+{
+	const uint32_t baudrates[] = {115200, 9600, 57600, 38400, 19200};
+
+	for (uint32_t baud : baudrates) {
+		int ret = gsmUart.configureBaud(baud);
+		std::cout << "GSM baud " << baud << " configure ret=" << ret << std::endl;
+
+		if (ret == 0 && gsmTryAt()) {
+			baudrate = baud;
+			return true;
+		}
+	}
+
+	return false;
+}
+
+static void gsmPowerPulse()
+{
+	gsmPwrKey.set(1);
+	k_msleep(4000);
+	gsmPwrKey.set(0);
+}
+
+static void gsmBasicInit()
+{
+	uint32_t detectedBaud = 0;
+
+	if (!gsmFindBaud(detectedBaud)) {
+		std::cout << "GSM no AT response, pulsing PWRKEY" << std::endl;
+		gsmPowerPulse();
+		k_msleep(10000);
+
+		if (!gsmFindBaud(detectedBaud)) {
+			std::cout << "GSM still no AT response after PWRKEY" << std::endl;
+			return;
+		}
+	}
+
+	std::cout << "GSM AT OK at baud " << detectedBaud << std::endl;
+	gsmCommand("AT+IPR?\r\n", 5000);
+
+	if (detectedBaud != 115200) {
+		if (gsmCommand("AT+IPR=115200\r\n", 5000)) {
+			k_msleep(200);
+			gsmUart.configureBaud(115200);
+			gsmTryAt();
+		}
+	}
+
+	gsmCommand("ATE1\r\n", 5000);
+}
+
 int main(void)
 {
 	std::cout << "Hello, C++ world! " << CONFIG_BOARD << std::endl;
@@ -27,14 +154,9 @@ int main(void)
 	utilityPwrLed.init();
 	cellularLed.init();
 	gsmPwrKey.init();
-k_msleep(100);
-	gsmPwrKey.set(1);
-	k_msleep(4000);
-	gsmPwrKey.set(0);
-	k_msleep(6000);
-
 	int gsmUartInit = gsmUart.init();
 	std::cout << "GSM UART init: " << gsmUartInit << std::endl;
+	gsmBasicInit();
 
 	int ret = energyMeters.init();
 	std::cout << "HLW811x init: " << ret << std::endl;
@@ -49,19 +171,7 @@ k_msleep(100);
 		std::cout << "HLW811x meter 1 sys status err=" << err
 				  << " value=0x" << std::hex << sysStatus << std::dec << std::endl;
 
-		constexpr uint8_t atCmd[] = {'A', 'T', '\r', '\n'};
-		uint8_t gsmRx[128] = {};
-
-		gsmUart.flushRx();
-		int gsmTx = gsmUart.write(std::span<const uint8_t>(atCmd, sizeof(atCmd)));
-		int gsmRxLen = gsmUart.read(std::span<uint8_t>(gsmRx, sizeof(gsmRx)), 10000);
-
-		std::cout << "GSM AT tx=" << gsmTx << " rx=" << gsmRxLen << " ";
-		for (int i = 0; i < gsmRxLen; ++i)
-		{
-			std::cout << static_cast<char>(gsmRx[i]);
-		}
-		std::cout << std::endl;
+		gsmTryAt();
 
 		k_msleep(3000);
 	}
