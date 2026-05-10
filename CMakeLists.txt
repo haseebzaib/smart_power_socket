@@ -8,9 +8,14 @@ project(smart_power_socket)
 target_sources(app PRIVATE
 	src/main.cpp
 	src/hardware/gpio_con.cpp
+	src/hardware/uart_con.cpp
+	src/sensors/hlw811x.cpp
+	src/sensors/externalLibs/hlw811x/hlw811x.c
 )
 
 target_include_directories(app PRIVATE
 	src
 	src/hardware
+	src/sensors
+	src/sensors/externalLibs/hlw811x
 )
