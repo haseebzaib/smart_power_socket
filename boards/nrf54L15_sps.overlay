@@ -136,7 +136,7 @@
 
 &uart20 {
 	status = "okay";
-	current-speed = <9600>;
+	current-speed = <115200>;
 	pinctrl-0 = <&gsm_uart_default>;
 	pinctrl-1 = <&gsm_uart_sleep>;
 	pinctrl-names = "default", "sleep";
