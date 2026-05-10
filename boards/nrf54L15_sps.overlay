@@ -69,7 +69,7 @@
 		};
 
 		gsm_pwrkey: gsm-pwrkey {
-			gpios = <&gpio1 8 GPIO_ACTIVE_LOW>;
+			gpios = <&gpio1 8 GPIO_ACTIVE_HIGH>;
 		};
 
 		energy_metering_mux_logic_a: energy-metering-mux-logic-a {
