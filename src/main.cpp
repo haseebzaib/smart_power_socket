@@ -30,6 +30,7 @@ struct async_uart_test {
 	const char *name;
 	uint8_t rx_buf[2][64];
 	uint8_t next_buf;
+	bool ready;
 	volatile bool tx_busy;
 };
 
@@ -119,47 +120,41 @@ static void uart_cb(const device *dev, uart_event *evt, void *user_data)
 	}
 }
 
-static int async_uart_init(async_uart_test *ctx, uint32_t baudrate)
+static int async_uart_init(async_uart_test *ctx)
 {
 	if (!device_is_ready(ctx->dev)) {
 		printk("%s UART not ready\n", ctx->name);
 		return -ENODEV;
 	}
 
-	const uart_config config = {
-		.baudrate = baudrate,
-		.parity = UART_CFG_PARITY_NONE,
-		.stop_bits = UART_CFG_STOP_BITS_1,
-		.data_bits = UART_CFG_DATA_BITS_8,
-		.flow_ctrl = UART_CFG_FLOW_CTRL_NONE,
-	};
-
-	int ret = uart_configure(ctx->dev, &config);
-	if (ret != 0) {
-		printk("%s uart_configure failed %d\n", ctx->name, ret);
-		return ret;
-	}
-
-	ret = uart_callback_set(ctx->dev, uart_cb, ctx);
+	int ret = uart_callback_set(ctx->dev, uart_cb, ctx);
 	if (ret != 0) {
 		printk("%s uart_callback_set failed %d\n", ctx->name, ret);
 		return ret;
 	}
 
 	ctx->next_buf = 1;
+	ctx->ready = false;
 	ctx->tx_busy = false;
 
 	ret = uart_rx_enable(ctx->dev, ctx->rx_buf[0], sizeof(ctx->rx_buf[0]),
 			     10000);
 	if (ret != 0) {
 		printk("%s uart_rx_enable failed %d\n", ctx->name, ret);
+		return ret;
 	}
 
-	return ret;
+	ctx->ready = true;
+	return 0;
 }
 
 static int async_uart_send(async_uart_test *ctx, const uint8_t *data, size_t len)
 {
+	if (!ctx->ready) {
+		printk("%s TX skipped, UART not ready\n", ctx->name);
+		return -ENODEV;
+	}
+
 	if (ctx->tx_busy) {
 		printk("%s TX busy\n", ctx->name);
 		return -EBUSY;
@@ -234,10 +229,10 @@ int main(void)
 
 	gsm_power_pulse();
 
-	ret = async_uart_init(&gsm_uart, 9600);
+	ret = async_uart_init(&gsm_uart);
 	printk("GSM async UART init %d\n", ret);
 
-	ret = async_uart_init(&hlw_uart, 9600);
+	ret = async_uart_init(&hlw_uart);
 	printk("HLW async UART init %d\n", ret);
 
 	const uint8_t gsm_at[] = {'A', 'T', '\r', '\n'};
