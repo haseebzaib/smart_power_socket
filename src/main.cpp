@@ -169,11 +169,12 @@ int main(void)
 	std::cout << "HLW811x init: " << ret << std::endl;
 
 	uint16_t sysStatus = 0;
-
+k_msleep(5000);
 	while (1) {
 		// utilityPwrLed.toggle();
 		// cellularLed.toggle();
 		// relay4.toggle();
+		energyMeters.selectDevice(4);
 		hlw811x_error_t err = energyMeters.readSysStatus(4, sysStatus);
 		std::cout << "HLW811x meter 1 sys status err=" << err
 			  << " value=0x" << std::hex << sysStatus << std::dec << std::endl;

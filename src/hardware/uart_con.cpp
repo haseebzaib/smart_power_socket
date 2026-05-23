@@ -48,14 +48,14 @@ namespace hardware
             return -ENODEV;
         }
 
-        const struct uart_config config = {
-            .baudrate = baudrate,
-            .parity = UART_CFG_PARITY_NONE,
-            .stop_bits = UART_CFG_STOP_BITS_1,
-            .data_bits = UART_CFG_DATA_BITS_8,
-            .flow_ctrl = UART_CFG_FLOW_CTRL_NONE,
-        };
+        struct uart_config config;
+        int ret = uart_config_get(uart_, &config);
+        if (ret != 0)
+        {
+            return ret;
+        }
 
+        config.baudrate = baudrate;
         return uart_configure(uart_, &config);
     }
 

@@ -104,12 +104,12 @@ hlw811x_error_t hlw811x::readReg(uint8_t deviceNumber, hlw811x_reg_addr_t reg,
 
 hlw811x_error_t hlw811x::readSysStatus(uint8_t deviceNumber, uint16_t &status)
 {
-	uint8_t buffer[2] = {};
+	uint8_t buffer = 0;
 	hlw811x_error_t err = readReg(deviceNumber, HLW811X_REG_SYS_STATUS,
-		buffer, sizeof(buffer));
+		&buffer, sizeof(buffer));
 
 	if (err == HLW811X_ERROR_NONE) {
-		status = (static_cast<uint16_t>(buffer[0]) << 8) | buffer[1];
+		status = buffer;
 	}
 
 	return err;
@@ -127,7 +127,15 @@ int hlw811x::llWrite(uint8_t deviceNumber, const uint8_t *data, size_t length)
 	}
 
 	uart_.flushRx();
-	return uart_.write(std::span<const uint8_t>(data, length));
+	ret = uart_.write(std::span<const uint8_t>(data, length));
+
+	printk("HLW811x meter %u tx=%d:", deviceNumber, ret);
+	for (size_t i = 0; i < length; ++i) {
+		printk(" %02x", data[i]);
+	}
+	printk("\n");
+
+	return ret;
 }
 
 int hlw811x::llRead(uint8_t deviceNumber, uint8_t *buffer, size_t length)
@@ -141,7 +149,17 @@ int hlw811x::llRead(uint8_t deviceNumber, uint8_t *buffer, size_t length)
 		return ret;
 	}
 
-	return uart_.read(std::span<uint8_t>(buffer, length), defaultTimeoutMs);
+	ret = uart_.read(std::span<uint8_t>(buffer, length), defaultTimeoutMs);
+
+	printk("HLW811x meter %u rx=%d:", deviceNumber, ret);
+	if (ret > 0) {
+		for (int i = 0; i < ret; ++i) {
+			printk(" %02x", buffer[i]);
+		}
+	}
+	printk("\n");
+
+	return ret;
 }
 
 } // namespace sensors
