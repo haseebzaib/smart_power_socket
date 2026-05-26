@@ -37,6 +37,8 @@ public:
 	hlw811x_error_t readReg(uint8_t deviceNumber, hlw811x_reg_addr_t reg,
 		uint8_t *buffer, size_t length);
 	hlw811x_error_t readSysStatus(uint8_t deviceNumber, uint16_t &status);
+	int printBaseline(uint8_t deviceNumber,
+		const hlw811x_resistor_ratio &ratio);
 
 	int llWrite(uint8_t deviceNumber, const uint8_t *data, size_t length);
 	int llRead(uint8_t deviceNumber, uint8_t *buffer, size_t length);

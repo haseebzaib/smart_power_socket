@@ -168,31 +168,26 @@ int main(void)
 	int ret = energyMeters.init();
 	std::cout << "HLW811x init: " << ret << std::endl;
 
-	uint16_t sysStatus = 0;
-k_msleep(5000);
+	const hlw811x_resistor_ratio baselineRatio = {
+		.K1_A = 3.0f,
+		.K1_B = 1.0f,
+		.K2 = 1.0f,
+	};
+
+	k_msleep(5000);
 	while (1) {
 		// utilityPwrLed.toggle();
 		// cellularLed.toggle();
 		// relay4.toggle();
-		energyMeters.selectDevice(4);
-		hlw811x_error_t err = energyMeters.readSysStatus(4, sysStatus);
-		std::cout << "HLW811x meter 1 sys status err=" << err
-			  << " value=0x" << std::hex << sysStatus << std::dec << std::endl;
 
-		constexpr uint8_t atCmd[] = {'A', 'T', '\r', '\n'};
-		uint8_t gsmRx[128] = {};
-
-		gsmUart.flushRx();
-		int gsmTx = gsmUart.write(std::span<const uint8_t>(atCmd, sizeof(atCmd)));
-		int gsmRxLen = gsmUart.read(std::span<uint8_t>(gsmRx, sizeof(gsmRx)), 10000);
-
-		std::cout << "GSM AT tx=" << gsmTx << " rx=" << gsmRxLen << " ";
-		for (int i = 0; i < gsmRxLen; ++i) {
-			std::cout << static_cast<char>(gsmRx[i]);
+		for (uint8_t meter = 1; meter <= 4; ++meter) {
+			int baselineRet = energyMeters.printBaseline(meter, baselineRatio);
+			std::cout << "HLW811x meter " << static_cast<int>(meter)
+				  << " baseline ret=" << baselineRet << std::endl;
+			k_msleep(5000);
 		}
-		std::cout << std::endl;
 
-		k_msleep(3000);
+		k_msleep(5000);
 	}
 	return 0;
 }

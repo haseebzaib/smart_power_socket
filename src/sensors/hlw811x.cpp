@@ -6,6 +6,27 @@
 
 namespace sensors {
 
+static int countError(hlw811x_error_t err)
+{
+	return err == HLW811X_ERROR_NONE ? 0 : 1;
+}
+
+static void printErr(const char *label, hlw811x_error_t err)
+{
+	printk("  %s err=%d\n", label, err);
+}
+
+static void printU16(const char *label, hlw811x_error_t err, uint16_t value)
+{
+	printk("  %s err=%d value=0x%04x\n", label, err, value);
+}
+
+static void printI32(const char *label, hlw811x_error_t err, int32_t value,
+	const char *unit)
+{
+	printk("  %s err=%d value=%d %s\n", label, err, value, unit);
+}
+
 hlw811x::hlw811x(const device *uart, gpio_dt_spec muxA, gpio_dt_spec muxB,
 	uint8_t deviceCount)
 	: uart_(uart),
@@ -113,6 +134,176 @@ hlw811x_error_t hlw811x::readSysStatus(uint8_t deviceNumber, uint16_t &status)
 	}
 
 	return err;
+}
+
+int hlw811x::printBaseline(uint8_t deviceNumber,
+	const hlw811x_resistor_ratio &ratio)
+{
+	if (!initialized_ || !validDevice(deviceNumber)) {
+		return -EINVAL;
+	}
+
+	const size_t index = deviceNumber - 1;
+	struct ::hlw811x *device = devices_[index];
+	if (device == nullptr) {
+		return -ENODEV;
+	}
+
+	int failures = 0;
+	uint16_t sysStatus = 0;
+	hlw811x_error_t err = readSysStatus(deviceNumber, sysStatus);
+
+	printk("HLW811x meter %u baseline\n", deviceNumber);
+	printU16("sys_status", err, sysStatus);
+	failures += countError(err);
+
+	hlw811x_set_resistor_ratio(device, &ratio);
+
+	hlw811x_coeff coeff = {};
+	err = hlw811x_read_coeff(device, &coeff);
+	printErr("read_coeff", err);
+	if (err == HLW811X_ERROR_NONE) {
+		printk("  coeff hfconst=0x%04x rmsA=0x%04x rmsB=0x%04x rmsU=0x%04x\n",
+			coeff.hfconst, coeff.rms.A, coeff.rms.B, coeff.rms.U);
+		printk("  coeff pA=0x%04x pB=0x%04x pS=0x%04x eA=0x%04x eB=0x%04x\n",
+			coeff.power.A, coeff.power.B, coeff.power.S,
+			coeff.energy.A, coeff.energy.B);
+	}
+	failures += countError(err);
+
+	hlw811x_pga pga = {};
+	const hlw811x_pga baselinePga = {
+		.A = HLW811X_PGA_GAIN_16,
+		.B = HLW811X_PGA_GAIN_1,
+		.U = HLW811X_PGA_GAIN_1,
+	};
+
+	err = hlw811x_set_pga(device, &baselinePga);
+	printErr("set_pga", err);
+	failures += countError(err);
+
+	err = hlw811x_get_pga(device, &pga);
+	printk("  %s err=%d A=%d B=%d U=%d\n", "pga", err, pga.A, pga.B,
+		pga.U);
+	failures += countError(err);
+
+	err = hlw811x_set_channel_b_mode(device, HLW811X_B_MODE_TEMPERATURE);
+	printErr("set_b_temp_mode", err);
+	failures += countError(err);
+
+	err = hlw811x_set_active_power_calc_mode(device,
+		HLW811X_ACTIVE_POWER_MODE_POS_NEG_ALGEBRAIC);
+	printErr("set_power_mode", err);
+	failures += countError(err);
+
+	hlw811x_active_power_mode_t activePowerMode =
+		HLW811X_ACTIVE_POWER_MODE_POS_NEG_ALGEBRAIC;
+	err = hlw811x_get_active_power_calc_mode(device, &activePowerMode);
+	printk("  %s err=%d mode=%d\n", "active_power_mode", err,
+		activePowerMode);
+	failures += countError(err);
+
+	err = hlw811x_set_rms_calc_mode(device, HLW811X_RMS_MODE_AC);
+	printErr("set_rms_mode", err);
+	failures += countError(err);
+
+	hlw811x_rms_mode_t rmsMode = HLW811X_RMS_MODE_AC;
+	err = hlw811x_get_rms_calc_mode(device, &rmsMode);
+	printk("  %s err=%d mode=%d\n", "rms_mode", err, rmsMode);
+	failures += countError(err);
+
+	err = hlw811x_set_data_update_frequency(device,
+		HLW811X_DATA_UPDATE_FREQ_HZ_3_4);
+	printErr("set_update_freq", err);
+	failures += countError(err);
+
+	hlw811x_data_update_freq_t updateFreq = HLW811X_DATA_UPDATE_FREQ_HZ_3_4;
+	err = hlw811x_get_data_update_frequency(device, &updateFreq);
+	printk("  %s err=%d mode=%d\n", "update_freq", err, updateFreq);
+	failures += countError(err);
+
+	hlw811x_channel_b_mode_t bMode = HLW811X_B_MODE_TEMPERATURE;
+	err = hlw811x_get_channel_b_mode(device, &bMode);
+	printk("  %s err=%d mode=%d\n", "channel_b_mode", err, bMode);
+	failures += countError(err);
+
+	hlw811x_channel_t currentChannel = HLW811X_CHANNEL_A;
+	err = hlw811x_read_current_channel(device, &currentChannel);
+	printk("  %s err=%d channel=0x%02x\n", "current_channel", err,
+		currentChannel);
+	failures += countError(err);
+
+	hlw811x_intr_t interrupts = static_cast<hlw811x_intr_t>(0);
+	err = hlw811x_get_interrupt(device, &interrupts);
+	printk("  %s err=%d mask=0x%04x\n", "interrupts", err,
+		interrupts);
+	failures += countError(err);
+
+	err = hlw811x_select_channel(device, HLW811X_CHANNEL_A);
+	printErr("select_channel_a", err);
+	failures += countError(err);
+
+	err = hlw811x_enable_channel(device, HLW811X_CHANNEL_A | HLW811X_CHANNEL_U);
+	printErr("enable_channels", err);
+	failures += countError(err);
+
+	err = hlw811x_disable_channel(device, HLW811X_CHANNEL_B);
+	printErr("disable_channel_b", err);
+	failures += countError(err);
+
+	err = hlw811x_enable_power_factor(device);
+	printErr("enable_pf", err);
+	failures += countError(err);
+
+	err = hlw811x_enable_waveform(device);
+	printErr("enable_waveform", err);
+	failures += countError(err);
+
+	err = hlw811x_enable_zerocrossing(device);
+	printErr("enable_zc", err);
+	failures += countError(err);
+
+	err = hlw811x_enable_pulse(device, HLW811X_CHANNEL_A);
+	printErr("enable_pulse_a", err);
+	failures += countError(err);
+
+	int32_t value = 0;
+	err = hlw811x_get_rms(device, HLW811X_CHANNEL_U, &value);
+	printI32("rms_voltage", err, value, "mV");
+	failures += countError(err);
+
+	err = hlw811x_get_rms(device, HLW811X_CHANNEL_A, &value);
+	printI32("rms_current_a", err, value, "mA");
+	failures += countError(err);
+
+	err = hlw811x_get_power(device, HLW811X_CHANNEL_A, &value);
+	printI32("active_power_a", err, value, "mW");
+	failures += countError(err);
+
+	err = hlw811x_get_power(device, HLW811X_CHANNEL_U, &value);
+	printI32("apparent_power", err, value, "mW");
+	failures += countError(err);
+
+	err = hlw811x_get_energy(device, HLW811X_CHANNEL_A, &value);
+	printI32("energy_a", err, value, "Wh");
+	failures += countError(err);
+
+	err = hlw811x_get_frequency(device, &value);
+	printI32("frequency", err, value, "centiHz");
+	failures += countError(err);
+
+	err = hlw811x_get_power_factor(device, &value);
+	printI32("power_factor", err, value, "centi");
+	failures += countError(err);
+
+	err = hlw811x_get_phase_angle(device, &value, HLW811X_LINE_FREQ_50HZ);
+	printI32("phase_angle", err, value, "centideg");
+	failures += countError(err);
+
+	printk("HLW811x meter %u baseline failures=%d\n", deviceNumber,
+		failures);
+
+	return failures == 0 ? 0 : -EIO;
 }
 
 int hlw811x::llWrite(uint8_t deviceNumber, const uint8_t *data, size_t length)
