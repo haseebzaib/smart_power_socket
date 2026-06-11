@@ -3,6 +3,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/uart.h>
+#include <zephyr/sys/ring_buffer.h>
 #include "stddef.h"
 #include "stdint.h"
 #include <zephyr/devicetree.h>
@@ -32,13 +33,22 @@ namespace hardware {
         int flushRx();
         int readIntr();
         int write(std::span <const uint8_t> data);
-        int writeIntr();
+        int writeIntr(std::span<const uint8_t> data);
 
 
         private:
+        /* Trampoline registered with the UART driver; dispatches to handleIrq(). */
+        static void irqDispatch(const struct device *_dev, void *_ctx);
+        void handleIrq();
+        void handleTx();
+
         const device *uart_;
         callBack callBack_;
         void *userData_;
+
+        /* TX bytes queued by writeIntr(), drained from the ISR via uart_fifo_fill. */
+        struct ring_buf txRing_;
+        uint8_t txBuf_[256];
 
 
 

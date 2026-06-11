@@ -28,17 +28,60 @@ namespace hardware
             return -1;
         }
 
+        ring_buf_init(&txRing_, sizeof(txBuf_), txBuf_);
+
+        /* Always install our own trampoline so interrupt TX works. The trampoline
+         * forwards RX events to the user callback and drains the TX ring buffer. */
+        ret = uart_irq_callback_user_data_set(uart_, &uartCon::irqDispatch, this);
+        if (ret != 0)
+        {
+            return ret;
+        }
+
         if (callBack_ != nullptr)
         {
-            ret = uart_irq_callback_user_data_set(uart_, callBack_, userData_);
-            if (ret != 0)
-            {
-                return ret;
-            }
             uart_irq_rx_enable(uart_);
         }
 
         return ret;
+    }
+
+    void uartCon::irqDispatch(const struct device *_dev, void *_ctx)
+    {
+        static_cast<uartCon *>(_ctx)->handleIrq();
+    }
+
+    void uartCon::handleIrq()
+    {
+        while (uart_irq_update(uart_) && uart_irq_is_pending(uart_))
+        {
+            if (uart_irq_rx_ready(uart_) && callBack_ != nullptr)
+            {
+                /* User callback drains the RX FIFO (e.g. into its own ring buffer). */
+                callBack_(uart_, userData_);
+            }
+
+            if (uart_irq_tx_ready(uart_))
+            {
+                handleTx();
+            }
+        }
+    }
+
+    void uartCon::handleTx()
+    {
+        uint8_t *data = nullptr;
+        uint32_t claimed = ring_buf_get_claim(&txRing_, &data, sizeof(txBuf_));
+
+        if (claimed == 0)
+        {
+            /* Nothing left to send; stop generating TX interrupts. */
+            uart_irq_tx_disable(uart_);
+            return;
+        }
+
+        int sent = uart_fifo_fill(uart_, data, static_cast<int>(claimed));
+        ring_buf_get_finish(&txRing_, sent < 0 ? 0 : static_cast<uint32_t>(sent));
     }
 
     int uartCon::configureBaud(uint32_t baudrate)
@@ -137,14 +180,24 @@ namespace hardware
         return static_cast<int>(data.size());
     }
 
-    int uartCon::writeIntr()
+    int uartCon::writeIntr(std::span<const uint8_t> data)
     {
         if (uart_ == nullptr)
         {
             return -ENODEV;
         }
+        if (data.empty())
+        {
+            return 0;
+        }
 
-        return -ENOSYS;
+        uint32_t queued = ring_buf_put(&txRing_, data.data(),
+                                       static_cast<uint32_t>(data.size()));
+
+        /* Kick off transmission; the ISR drains txRing_ until empty. */
+        uart_irq_tx_enable(uart_);
+
+        return static_cast<int>(queued);
     }
 
 }

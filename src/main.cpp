@@ -10,6 +10,8 @@
 #include <span>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
+#include <zephyr/sys/ring_buffer.h>
+#include <zephyr/drivers/uart.h>
 #include "hardware/gpio_con.hpp"
 #include "hardware/uart_con.hpp"
 #include "sensors/hlw811x.hpp"
@@ -22,7 +24,24 @@ hardware::gpioCon relay3(GPIO_DT_SPEC_GET(DT_ALIAS(relay3), gpios), GPIO_OUTPUT_
 hardware::gpioCon relay4(GPIO_DT_SPEC_GET(DT_ALIAS(relay4), gpios), GPIO_OUTPUT_INACTIVE);
 hardware::gpioCon gsmDtr(GPIO_DT_SPEC_GET(DT_ALIAS(gsm_dtr), gpios), GPIO_OUTPUT_INACTIVE);
 hardware::gpioCon gsmPwrKey(GPIO_DT_SPEC_GET(DT_ALIAS(gsm_pwrkey), gpios), GPIO_OUTPUT_INACTIVE);
-hardware::uartCon gsmUart(DEVICE_DT_GET(DT_ALIAS(gsm_uart)));
+
+/* Ring buffer for bytes received from the GSM module's UART, filled from the RX ISR. */
+RING_BUF_DECLARE(gsmRxRing, 256);
+
+/* Called from uartCon's ISR trampoline when RX data is ready. The trampoline
+ * already handles uart_irq_update()/pending looping, so we just drain the FIFO. */
+static void gsmUartIsr(const device *dev, void *userData)
+{
+	uint8_t buf[64];
+	int len = uart_fifo_read(dev, buf, sizeof(buf));
+
+	if (len > 0)
+	{
+		ring_buf_put(&gsmRxRing, buf, static_cast<uint32_t>(len));
+	}
+}
+
+hardware::uartCon gsmUart(DEVICE_DT_GET(DT_ALIAS(gsm_uart)), gsmUartIsr, nullptr);
 sensors::hlw811x energyMeters(
 	DEVICE_DT_GET(DT_ALIAS(hlw_uart)),
 	GPIO_DT_SPEC_GET(DT_ALIAS(energy_metering_mux_a), gpios),
@@ -76,56 +95,25 @@ static void printGsmResponse(std::span<const uint8_t> data)
 	printk("\n");
 }
 
-static int gsmAtExchange(const char *command, uint32_t totalTimeoutMs)
+static int gsmSendAt(const char *command)
 {
-	std::array<uint8_t, 160> response{};
-	size_t responseLen = 0;
-	int64_t deadline = k_uptime_get() + totalTimeoutMs;
-
-	gsmUart.flushRx();
-
-	int ret = gsmUart.write(std::span<const uint8_t>(
+	int ret = gsmUart.writeIntr(std::span<const uint8_t>(
 		reinterpret_cast<const uint8_t *>(command), std::strlen(command)));
 	printk("GSM TX \"%s\" ret=%d\n", command, ret);
-	if (ret < 0)
-	{
-		return ret;
-	}
-
-	while (k_uptime_get() < deadline && responseLen < response.size())
-	{
-		uint8_t byte = 0;
-		ret = gsmUart.read(std::span<uint8_t>(&byte, 1), 50);
-		if (ret == 1)
-		{
-			response[responseLen++] = byte;
-
-			if (responseLen >= 4 &&
-			    std::memcmp(response.data() + responseLen - 4, "OK\r\n", 4) == 0)
-			{
-				break;
-			}
-			if (responseLen >= 7 &&
-			    std::memcmp(response.data() + responseLen - 7, "ERROR\r\n", 7) == 0)
-			{
-				break;
-			}
-		}
-	}
-
-	printGsmResponse(std::span<const uint8_t>(response.data(), responseLen));
-	return responseLen > 0 ? static_cast<int>(responseLen) : -ETIMEDOUT;
+	return ret;
 }
 
-static void gsmProbe()
+/* Drains whatever the RX ISR has stashed in gsmRxRing and prints it. Call this
+ * regularly from the main loop so nothing is missed while we are busy elsewhere. */
+static void gsmDrainRx()
 {
-	gsmDtr.set(0);
-	int ret = gsmUart.configureBaud(115200);
-	printk("GSM UART force 115200 ret=%d\n", ret);
+	uint8_t buf[64];
+	uint32_t len = ring_buf_get(&gsmRxRing, buf, sizeof(buf));
 
-	k_msleep(200);
-	ret = gsmAtExchange("AT\r\n", 2000);
-	printk("GSM AT probe ret=%d\n", ret);
+	if (len > 0)
+	{
+		printGsmResponse(std::span<const uint8_t>(buf, len));
+	}
 }
 
 
@@ -134,7 +122,24 @@ static void gsmPowerPulse()
 	gsmPwrKey.set(1);
 	k_msleep(4000);
 	gsmPwrKey.set(0);
-	k_msleep(10000);
+	k_msleep(2000);
+}
+
+/* Enable command echo, then hammer AT a few times. If board-TX actually reaches
+ * the module's RX, ATE1 makes the module echo our bytes straight back, so we
+ * should see them in the RX drain even before any "OK" reply arrives. */
+static void gsmStartupProbe()
+{
+	gsmSendAt("ATE1\r\n");
+	k_msleep(300);
+	gsmDrainRx();
+
+	for (int i = 0; i < 5; ++i)
+	{
+		gsmSendAt("AT\r\n");
+		k_msleep(300);
+		gsmDrainRx();
+	}
 }
 
 int main(void)
@@ -148,9 +153,11 @@ int main(void)
 	relay4.init();
 	gsmDtr.init();
 	gsmPwrKey.init();
+
+
+
 	int gsmUartInit = gsmUart.init();
 	std::cout << "GSM UART init: " << gsmUartInit << std::endl;
-	gsmProbe();
 
 	int ret = energyMeters.init();
 	std::cout << "HLW811x init: " << ret << std::endl;
@@ -167,6 +174,14 @@ int main(void)
 
 
 	k_msleep(5000);
+
+		gsmDtr.set(0);
+	gsmPowerPulse();
+
+	gsmStartupProbe();
+
+	int64_t nextGsmTx = k_uptime_get();
+
 	while (1)
 	{
 
@@ -183,22 +198,29 @@ int main(void)
                int ret = energyMeters.measurement(meter,acMeasurements[meter - 1]);
 
 			   	std::cout << "HLW811x meter " << static_cast<int>(meter)
-					      << " ret=" << ret 
-					      << " mV "   << acMeasurements[meter - 1].mV 
+					      << " ret=" << ret
+					      << " mV "   << acMeasurements[meter - 1].mV
 						  << " mA "   << acMeasurements[meter - 1].mA
-						  << " mW "   << acMeasurements[meter - 1].mW 
+						  << " mW "   << acMeasurements[meter - 1].mW
 						  << " apparentmW "   << acMeasurements[meter - 1].apparentmW
-						  << " wH "   << acMeasurements[meter - 1].wH 
+						  << " wH "   << acMeasurements[meter - 1].wH
 						  << " hZ "   << acMeasurements[meter - 1].hZ
-						  << " pF "   << acMeasurements[meter - 1].pF 
+						  << " pF "   << acMeasurements[meter - 1].pF
 						  << std::endl;
 			}
 
+			gsmDrainRx();
 			k_msleep(300);
 		}
 
-		gsmAtExchange("AT\r\n", 1000);
-		k_msleep(5000);
+		if (k_uptime_get() >= nextGsmTx)
+		{
+			gsmSendAt("AT\r\n");
+			nextGsmTx = k_uptime_get() + 3000;
+		}
+
+		gsmDrainRx();
+		k_msleep(200);
 	}
 	return 0;
 }
