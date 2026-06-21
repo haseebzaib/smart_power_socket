@@ -13,6 +13,7 @@ namespace hardware
 
     uartCon::~uartCon()
     {
+        
     }
 
     int uartCon::init()
@@ -77,6 +78,7 @@ namespace hardware
         {
             /* Nothing left to send; stop generating TX interrupts. */
             uart_irq_tx_disable(uart_);
+            txDataTotal = 0;
             return;
         }
 
@@ -197,7 +199,14 @@ namespace hardware
         /* Kick off transmission; the ISR drains txRing_ until empty. */
         uart_irq_tx_enable(uart_);
 
+        txDataTotal = queued;
+
         return static_cast<int>(queued);
+    }
+
+    bool uartCon::writeIntrFinished()
+    {
+       return txDataTotal == 0;
     }
 
 }

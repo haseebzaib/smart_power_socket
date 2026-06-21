@@ -11,6 +11,7 @@ target_sources(app PRIVATE
 	src/hardware/uart_con.cpp
 	src/sensors/hlw811x.cpp
 	src/sensors/externalLibs/hlw811x/hlw811x.c
+	src/cellular/at_engine.cpp
 )
 
 target_include_directories(app PRIVATE
@@ -18,4 +19,5 @@ target_include_directories(app PRIVATE
 	src/hardware
 	src/sensors
 	src/sensors/externalLibs/hlw811x
+	src/cellular/
 )

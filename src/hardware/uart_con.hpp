@@ -34,6 +34,7 @@ namespace hardware {
         int readIntr();
         int write(std::span <const uint8_t> data);
         int writeIntr(std::span<const uint8_t> data);
+        bool writeIntrFinished();
 
 
         private:
@@ -46,9 +47,11 @@ namespace hardware {
         callBack callBack_;
         void *userData_;
 
+        uint8_t txDataTotal = 0;
+
         /* TX bytes queued by writeIntr(), drained from the ISR via uart_fifo_fill. */
         struct ring_buf txRing_;
-        uint8_t txBuf_[256];
+        uint8_t txBuf_[1024];
 
 
 

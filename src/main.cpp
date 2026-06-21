@@ -42,6 +42,10 @@ static void gsmUartIsr(const device *dev, void *userData)
 }
 
 hardware::uartCon gsmUart(DEVICE_DT_GET(DT_ALIAS(gsm_uart)), gsmUartIsr, nullptr);
+
+
+
+
 sensors::hlw811x energyMeters(
 	DEVICE_DT_GET(DT_ALIAS(hlw_uart)),
 	GPIO_DT_SPEC_GET(DT_ALIAS(energy_metering_mux_a), gpios),
