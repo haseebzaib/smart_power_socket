@@ -6,6 +6,7 @@
 #include "cstdint"
 #include "cstddef"
 #include "string_view"
+#include "atomic"
 
 #include "hardware/uart_con.hpp"
 
@@ -33,6 +34,7 @@ namespace cellular
             InvalidResponse,
             BufferOverflow,
             URCRecv,
+            Unknown
         }; 
         enum class urcResult
         {
@@ -69,25 +71,36 @@ namespace cellular
         /**
          * Parses upto Okay
          */
-        atResult sendCommand(std::string_view command, uint32_t timeout);
+        atResult sendCommand(std::string_view command, uint32_t timeoutMs);
         /**
          * Checks for URC and parses that
          */
         atResponse sendCommand(std::string_view command, std::string_view expectedURC, std::span<uint8_t> expectedResponse,
-                               uint32_t timeout);
+                               uint32_t timeoutMs);
+
+        void sendCommandAsync(std::string_view command);
+
+        atResponse process(std::span<uint8_t> recvCmdResp);
 
         urcMessage peekUrc(std::span<uint8_t> recvURC);
 
     private:
         static void rxCallback(const device *dev, void *userData);
 
+        atResult parseOkayError();
+        
+        int available() const;
+        bool contains(std::string_view pattern,uint32_t *getOffset);
+
+        int pushsingle(const uint8_t &value);
+        int popsingle( uint8_t &value);
         int pushBuf(std::span<const uint8_t> buf);
         int popBuf(std::span<uint8_t> buf);
-        int popFromSpecificLocation();
+        bool popRange(uint32_t offset,uint32_t length);
 
         std::array<uint8_t, 4096> rxBuffer;
-        uint32_t rd_index = 0;
-        uint32_t wr_index = 0;
+        std::atomic<uint32_t> rd_index ;
+        std::atomic<uint32_t> wr_index ;
         hardware::uartCon uart_;
     };
 

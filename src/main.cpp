@@ -15,6 +15,7 @@
 #include "hardware/gpio_con.hpp"
 #include "hardware/uart_con.hpp"
 #include "sensors/hlw811x.hpp"
+#include "cellular/at_engine.hpp"
 
 hardware::gpioCon utilityPwrLed(GPIO_DT_SPEC_GET(DT_ALIAS(utility_pwr_led), gpios), GPIO_OUTPUT_HIGH);
 hardware::gpioCon cellularLed(GPIO_DT_SPEC_GET(DT_ALIAS(cellular_led), gpios), GPIO_OUTPUT_HIGH);
@@ -25,23 +26,9 @@ hardware::gpioCon relay4(GPIO_DT_SPEC_GET(DT_ALIAS(relay4), gpios), GPIO_OUTPUT_
 hardware::gpioCon gsmDtr(GPIO_DT_SPEC_GET(DT_ALIAS(gsm_dtr), gpios), GPIO_OUTPUT_INACTIVE);
 hardware::gpioCon gsmPwrKey(GPIO_DT_SPEC_GET(DT_ALIAS(gsm_pwrkey), gpios), GPIO_OUTPUT_INACTIVE);
 
-/* Ring buffer for bytes received from the GSM module's UART, filled from the RX ISR. */
-RING_BUF_DECLARE(gsmRxRing, 256);
 
-/* Called from uartCon's ISR trampoline when RX data is ready. The trampoline
- * already handles uart_irq_update()/pending looping, so we just drain the FIFO. */
-static void gsmUartIsr(const device *dev, void *userData)
-{
-	uint8_t buf[64];
-	int len = uart_fifo_read(dev, buf, sizeof(buf));
 
-	if (len > 0)
-	{
-		ring_buf_put(&gsmRxRing, buf, static_cast<uint32_t>(len));
-	}
-}
-
-hardware::uartCon gsmUart(DEVICE_DT_GET(DT_ALIAS(gsm_uart)), gsmUartIsr, nullptr);
+cellular::atEngine atEngine_(DEVICE_DT_GET(DT_ALIAS(gsm_uart)));
 
 
 
@@ -68,57 +55,8 @@ std::array<int,4> energyMeterErr;
 
 std::array<sensors::hlw811x::measurements,4> acMeasurements;
 
-static void printGsmResponse(std::span<const uint8_t> data)
-{
-	printk("GSM RX len=%u text=\"", static_cast<unsigned int>(data.size()));
-	for (uint8_t byte : data)
-	{
-		if (byte >= 0x20 && byte <= 0x7e)
-		{
-			printk("%c", byte);
-		}
-		else if (byte == '\r')
-		{
-			printk("\\r");
-		}
-		else if (byte == '\n')
-		{
-			printk("\\n");
-		}
-		else
-		{
-			printk("\\x%02x", byte);
-		}
-	}
 
-	printk("\" hex=");
-	for (uint8_t byte : data)
-	{
-		printk("%02x ", byte);
-	}
-	printk("\n");
-}
 
-static int gsmSendAt(const char *command)
-{
-	int ret = gsmUart.writeIntr(std::span<const uint8_t>(
-		reinterpret_cast<const uint8_t *>(command), std::strlen(command)));
-	printk("GSM TX \"%s\" ret=%d\n", command, ret);
-	return ret;
-}
-
-/* Drains whatever the RX ISR has stashed in gsmRxRing and prints it. Call this
- * regularly from the main loop so nothing is missed while we are busy elsewhere. */
-static void gsmDrainRx()
-{
-	uint8_t buf[64];
-	uint32_t len = ring_buf_get(&gsmRxRing, buf, sizeof(buf));
-
-	if (len > 0)
-	{
-		printGsmResponse(std::span<const uint8_t>(buf, len));
-	}
-}
 
 
 static void gsmPowerPulse()
@@ -129,22 +67,7 @@ static void gsmPowerPulse()
 	k_msleep(2000);
 }
 
-/* Enable command echo, then hammer AT a few times. If board-TX actually reaches
- * the module's RX, ATE1 makes the module echo our bytes straight back, so we
- * should see them in the RX drain even before any "OK" reply arrives. */
-static void gsmStartupProbe()
-{
-	gsmSendAt("ATE1\r\n");
-	k_msleep(300);
-	gsmDrainRx();
 
-	for (int i = 0; i < 5; ++i)
-	{
-		gsmSendAt("AT\r\n");
-		k_msleep(300);
-		gsmDrainRx();
-	}
-}
 
 int main(void)
 {
@@ -158,13 +81,9 @@ int main(void)
 	gsmDtr.init();
 	gsmPwrKey.init();
 
-
-
-	int gsmUartInit = gsmUart.init();
-	std::cout << "GSM UART init: " << gsmUartInit << std::endl;
-
 	int ret = energyMeters.init();
-	std::cout << "HLW811x init: " << ret << std::endl;
+	atEngine_.init();
+
 
 	for(uint8_t meter = 1;meter <=4; ++meter)
 	{
@@ -179,12 +98,14 @@ int main(void)
 
 	k_msleep(5000);
 
-		gsmDtr.set(0);
-	gsmPowerPulse();
+	gsmDtr.set(0);
+	//gsmPowerPulse();
 
-	gsmStartupProbe();
+
 
 	int64_t nextGsmTx = k_uptime_get();
+
+	
 
 	while (1)
 	{
@@ -213,18 +134,20 @@ int main(void)
 						  << std::endl;
 			}
 
-			gsmDrainRx();
 			k_msleep(300);
 		}
 
-		if (k_uptime_get() >= nextGsmTx)
+		if(atEngine_.sendCommand("AT\r\n",1000) == cellular::atEngine::atResult::OK)
 		{
-			gsmSendAt("AT\r\n");
-			nextGsmTx = k_uptime_get() + 3000;
+			 printk("Send Command okay\r\n");
+		}
+		else
+		{
+			printk("Send Command not okay\r\n");
 		}
 
-		gsmDrainRx();
-		k_msleep(200);
+		k_msleep(1000);
+
 	}
 	return 0;
 }
