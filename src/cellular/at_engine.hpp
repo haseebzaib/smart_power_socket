@@ -68,37 +68,55 @@ namespace cellular
         atEngine &operator=(const atEngine &) = delete;
 
         int init();
+
+        void processRx();
+        void onRxByte(uint8_t byte);
         /**
          * Parses upto Okay
          */
-        atResult sendCommand(std::string_view command, uint32_t timeoutMs);
+        atResult send_command(std::string_view command, uint32_t timeoutMs);
         /**
          * Checks for URC and parses that
          */
-        atResponse sendCommand(std::string_view command, std::string_view expectedURC, std::span<uint8_t> expectedResponse,
+        atResponse send_command(std::string_view command, std::string_view expectedURC, std::span<uint8_t> expectedResponse,
                                uint32_t timeoutMs);
-
-        void sendCommandAsync(std::string_view command);
-
-        atResponse process(std::span<uint8_t> recvCmdResp);
-
-        urcMessage peekUrc(std::span<uint8_t> recvURC);
+        
 
     private:
+        bool save_response(std::string_view line);
+        void handle_line(std::string_view line);
+  
+        
+        
+
+        int available() const;
+        int push_single(const uint8_t &value);
+        int pop_single( uint8_t &value);
+        int push_buf(std::span<const uint8_t> buf);
+        int pop_buf(std::span<uint8_t> buf);
+        bool pop_range(uint32_t offset,uint32_t length);
+
         static void rxCallback(const device *dev, void *userData);
 
-        atResult parseOkayError();
-        
-        int available() const;
-        bool contains(std::string_view pattern,uint32_t *getOffset);
 
-        int pushsingle(const uint8_t &value);
-        int popsingle( uint8_t &value);
-        int pushBuf(std::span<const uint8_t> buf);
-        int popBuf(std::span<uint8_t> buf);
-        bool popRange(uint32_t offset,uint32_t length);
+
+        struct pendingCommand {
+            bool active = false;
+            bool done = false;
+            bool responseSeen = false;
+            bool collectingResponse = false;
+
+            std::string_view expectedPrefix{};
+            atResult result = atResult::Timeout;
+        };
+
+        pendingCommand currentCommand{};
 
         std::array<uint8_t, 4096> rxBuffer;
+        std::array<uint8_t,1024> commandResponse;
+        uint32_t commandResponseLength;
+        std::array<uint8_t,1024> lineBuffer;
+        uint32_t lineBufferLength;
         std::atomic<uint32_t> rd_index ;
         std::atomic<uint32_t> wr_index ;
         hardware::uartCon uart_;

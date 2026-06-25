@@ -26,12 +26,7 @@ hardware::gpioCon relay4(GPIO_DT_SPEC_GET(DT_ALIAS(relay4), gpios), GPIO_OUTPUT_
 hardware::gpioCon gsmDtr(GPIO_DT_SPEC_GET(DT_ALIAS(gsm_dtr), gpios), GPIO_OUTPUT_INACTIVE);
 hardware::gpioCon gsmPwrKey(GPIO_DT_SPEC_GET(DT_ALIAS(gsm_pwrkey), gpios), GPIO_OUTPUT_INACTIVE);
 
-
-
 cellular::atEngine atEngine_(DEVICE_DT_GET(DT_ALIAS(gsm_uart)));
-
-
-
 
 sensors::hlw811x energyMeters(
 	DEVICE_DT_GET(DT_ALIAS(hlw_uart)),
@@ -51,13 +46,9 @@ const hlw811x_resistor_ratio baselineRatio = {
 	.K2 = 1.064f,
 };
 
-std::array<int,4> energyMeterErr;
+std::array<int, 4> energyMeterErr;
 
-std::array<sensors::hlw811x::measurements,4> acMeasurements;
-
-
-
-
+std::array<sensors::hlw811x::measurements, 4> acMeasurements;
 
 static void gsmPowerPulse()
 {
@@ -66,8 +57,6 @@ static void gsmPowerPulse()
 	gsmPwrKey.set(0);
 	k_msleep(2000);
 }
-
-
 
 int main(void)
 {
@@ -84,10 +73,9 @@ int main(void)
 	int ret = energyMeters.init();
 	atEngine_.init();
 
-
-	for(uint8_t meter = 1;meter <=4; ++meter)
+	for (uint8_t meter = 1; meter <= 4; ++meter)
 	{
-		energyMeterErr[meter - 1] = energyMeters.configureIndividual(meter,baselineRatio,baselinePga);
+		energyMeterErr[meter - 1] = energyMeters.configureIndividual(meter, baselineRatio, baselinePga);
 	}
 
 	relay1.set(1);
@@ -95,59 +83,106 @@ int main(void)
 	relay3.set(1);
 	relay4.set(1);
 
-
 	k_msleep(5000);
 
 	gsmDtr.set(0);
-	//gsmPowerPulse();
-
-
+	// gsmPowerPulse();
 
 	int64_t nextGsmTx = k_uptime_get();
-
-	
 
 	while (1)
 	{
 
-
-
-		 for (uint8_t meter = 1; meter <= 4; ++meter)
+		for (uint8_t meter = 1; meter <= 4; ++meter)
 		{
-			if(energyMeterErr[meter - 1] != 0)
+			if (energyMeterErr[meter - 1] != 0)
 			{
-				energyMeters.configureIndividual(meter,baselineRatio,baselinePga);
+				energyMeters.configureIndividual(meter, baselineRatio, baselinePga);
 			}
 			else
 			{
-               int ret = energyMeters.measurement(meter,acMeasurements[meter - 1]);
+				int ret = energyMeters.measurement(meter, acMeasurements[meter - 1]);
 
-			   	std::cout << "HLW811x meter " << static_cast<int>(meter)
-					      << " ret=" << ret
-					      << " mV "   << acMeasurements[meter - 1].mV
-						  << " mA "   << acMeasurements[meter - 1].mA
-						  << " mW "   << acMeasurements[meter - 1].mW
-						  << " apparentmW "   << acMeasurements[meter - 1].apparentmW
-						  << " wH "   << acMeasurements[meter - 1].wH
-						  << " hZ "   << acMeasurements[meter - 1].hZ
-						  << " pF "   << acMeasurements[meter - 1].pF
+				std::cout << "HLW811x meter " << static_cast<int>(meter)
+						  << " ret=" << ret
+						  << " mV " << acMeasurements[meter - 1].mV
+						  << " mA " << acMeasurements[meter - 1].mA
+						  << " mW " << acMeasurements[meter - 1].mW
+						  << " apparentmW " << acMeasurements[meter - 1].apparentmW
+						  << " wH " << acMeasurements[meter - 1].wH
+						  << " hZ " << acMeasurements[meter - 1].hZ
+						  << " pF " << acMeasurements[meter - 1].pF
 						  << std::endl;
 			}
 
 			k_msleep(300);
 		}
 
-		if(atEngine_.sendCommand("AT\r\n",1000) == cellular::atEngine::atResult::OK)
+		if (atEngine_.send_command("AT\r\n", 1000) == cellular::atEngine::atResult::OK)
 		{
-			 printk("Send Command okay\r\n");
+			printk("Send Command okay\r\n");
 		}
 		else
 		{
 			printk("Send Command not okay\r\n");
 		}
 
-		k_msleep(1000);
+		std::array<uint8_t, 20> atData{};
 
+		auto response = atEngine_.send_command(
+			"AT+CGMI\r\n",
+			"",
+			std::span<uint8_t>{atData.data(), atData.size()},
+			1000);
+
+		if (response.result == cellular::atEngine::atResult::OK)
+		{
+			printk("AT+CGMI: %.*s\r\n",
+				   static_cast<int>(response.responseLength),
+				   reinterpret_cast<const char *>(atData.data()));
+		}
+
+
+		response = atEngine_.send_command(
+			"AT+CGMM\r\n",
+			"",
+			std::span<uint8_t>{atData.data(), atData.size()},
+			1000);
+
+		if (response.result == cellular::atEngine::atResult::OK)
+		{
+			printk("AT+CGMM: %.*s\r\n",
+				   static_cast<int>(response.responseLength),
+				   reinterpret_cast<const char *>(atData.data()));
+		}
+
+		response = atEngine_.send_command(
+			"AT+CGMR\r\n",
+			"Revision:",
+			std::span<uint8_t>{atData.data(), atData.size()},
+			1000);
+
+		if (response.result == cellular::atEngine::atResult::OK)
+		{
+			printk("AT+CGMR: %.*s\r\n",
+				   static_cast<int>(response.responseLength),
+				   reinterpret_cast<const char *>(atData.data()));
+		}
+
+		response = atEngine_.send_command(
+			"AT+CIMI\r\n",
+			"",
+			std::span<uint8_t>{atData.data(), atData.size()},
+			1000);
+
+		if (response.result == cellular::atEngine::atResult::OK)
+		{
+			printk("AT+CIMI: %.*s\r\n",
+				   static_cast<int>(response.responseLength),
+				   reinterpret_cast<const char *>(atData.data()));
+		}
+
+		k_msleep(1000);
 	}
 	return 0;
 }
