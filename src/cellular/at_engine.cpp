@@ -1,5 +1,8 @@
 #include "at_engine.hpp"
 
+
+LOG_MODULE_REGISTER(at_engine, LOG_LEVEL_INF);
+
 namespace cellular
 {
 
@@ -26,7 +29,7 @@ namespace cellular
 
         while (pop_single(byte) == 0)
         {
-            printk("%c", static_cast<char>(byte));
+            LOG_INF("processRx: %c", static_cast<char>(byte));
             onRxByte(byte);
         }
     }
@@ -69,6 +72,10 @@ namespace cellular
         currentCommand.expectedPrefix = nullptr;
         currentCommand.result = atResult::Timeout;
 
+   
+
+        	LOG_INF("SendCmd: %s", command.data());
+
         uint32_t tick = 0;
         std::span<const uint8_t> bytes = std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(command.data()), command.size());
 
@@ -103,6 +110,8 @@ namespace cellular
 
         commandResponse.fill(0);
         commandResponseLength = 0;
+
+        LOG_INF("SendCmd: %s", command.data());
 
         uint32_t tick = 0;
         std::span<const uint8_t> bytes = std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(command.data()), command.size());
@@ -204,9 +213,8 @@ namespace cellular
                     currentCommand.collectingResponse = true;
                     return;
                 }
-                if (currentCommand.collectingResponse /*&& !isURC()*/)
+                else if (currentCommand.collectingResponse /*&& !isURC()*/)
                 {
-
                     save_response(line);
                     return;
                 }

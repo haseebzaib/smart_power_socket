@@ -16,6 +16,9 @@
 #include <zephyr/sys/ring_buffer.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/device.h>
+#include <zephyr/logging/log.h>
+
+
 
 namespace cellular
 {

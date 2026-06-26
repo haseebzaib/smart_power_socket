@@ -12,6 +12,7 @@ target_sources(app PRIVATE
 	src/sensors/hlw811x.cpp
 	src/sensors/externalLibs/hlw811x/hlw811x.c
 	src/cellular/at_engine.cpp
+	src/cellular/sim7080.cpp
 )
 
 target_include_directories(app PRIVATE
