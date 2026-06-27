@@ -28,15 +28,9 @@ hardware::gpioCon relay1(GPIO_DT_SPEC_GET(DT_ALIAS(relay1), gpios), GPIO_OUTPUT_
 hardware::gpioCon relay2(GPIO_DT_SPEC_GET(DT_ALIAS(relay2), gpios), GPIO_OUTPUT_INACTIVE);
 hardware::gpioCon relay3(GPIO_DT_SPEC_GET(DT_ALIAS(relay3), gpios), GPIO_OUTPUT_INACTIVE);
 hardware::gpioCon relay4(GPIO_DT_SPEC_GET(DT_ALIAS(relay4), gpios), GPIO_OUTPUT_INACTIVE);
-// hardware::gpioCon gsmDtr(GPIO_DT_SPEC_GET(DT_ALIAS(gsm_dtr), gpios), GPIO_OUTPUT_INACTIVE);
-// hardware::gpioCon gsmPwrKey(GPIO_DT_SPEC_GET(DT_ALIAS(gsm_pwrkey), gpios), GPIO_OUTPUT_INACTIVE);
 
-// cellular::atEngine atEngine_(DEVICE_DT_GET(DT_ALIAS(gsm_uart)));
-
-
-cellular::sim7080 modemSim7080(DEVICE_DT_GET(DT_ALIAS(gsm_uart)), 
-                                GPIO_DT_SPEC_GET(DT_ALIAS(gsm_pwrkey), gpios) 
-							,GPIO_OUTPUT_INACTIVE);
+cellular::sim7080 modemSim7080(DEVICE_DT_GET(DT_ALIAS(gsm_uart)),
+							   GPIO_DT_SPEC_GET(DT_ALIAS(gsm_pwrkey), gpios), GPIO_OUTPUT_INACTIVE);
 
 sensors::hlw811x energyMeters(
 	DEVICE_DT_GET(DT_ALIAS(hlw_uart)),
@@ -60,7 +54,6 @@ std::array<int, 4> energyMeterErr;
 
 std::array<sensors::hlw811x::measurements, 4> acMeasurements;
 
-
 int main(void)
 {
 
@@ -71,8 +64,7 @@ int main(void)
 	relay3.init();
 	relay4.init();
 
-	int ret = energyMeters.init();
-
+	energyMeters.init();
 
 	for (uint8_t meter = 1; meter <= 4; ++meter)
 	{
@@ -88,9 +80,7 @@ int main(void)
 
 	modemSim7080.init();
 
-
-
-	int64_t nextGsmTx = k_uptime_get();
+	cellular::sim7080::modemInformation sim7080Information{};
 
 	while (1)
 	{
@@ -104,33 +94,35 @@ int main(void)
 			else
 			{
 				int ret = energyMeters.measurement(meter, acMeasurements[meter - 1]);
-
-				// std::cout << "HLW811x meter " << static_cast<int>(meter)
-				// 		  << " ret=" << ret
-				// 		  << " mV " << acMeasurements[meter - 1].mV
-				// 		  << " mA " << acMeasurements[meter - 1].mA
-				// 		  << " mW " << acMeasurements[meter - 1].mW
-				// 		  << " apparentmW " << acMeasurements[meter - 1].apparentmW
-				// 		  << " wH " << acMeasurements[meter - 1].wH
-				// 		  << " hZ " << acMeasurements[meter - 1].hZ
-				// 		  << " pF " << acMeasurements[meter - 1].pF
-				// 		  << std::endl;
+				LOG_INF("#########START#########");
 				LOG_INF("HLW811x meter %d", static_cast<int>(meter));
 				LOG_INF("ret= %d", ret);
-				LOG_INF("mV %d",  acMeasurements[meter - 1].mV);
+				LOG_INF("mV %d", acMeasurements[meter - 1].mV);
 				LOG_INF("mA %d", acMeasurements[meter - 1].mA);
 				LOG_INF("mW %d", acMeasurements[meter - 1].mW);
 				LOG_INF("apparentmW %d", acMeasurements[meter - 1].apparentmW);
 				LOG_INF("wH %d", acMeasurements[meter - 1].wH);
 				LOG_INF("hZ %d", acMeasurements[meter - 1].hZ);
 				LOG_INF("pF %d", acMeasurements[meter - 1].pF);
-				
+				LOG_INF("#########END#########");
 			}
 
 			k_msleep(300);
 		}
 
-	
+		modemSim7080.loop(sim7080Information);
+
+		LOG_INF("#########Sim7080Information#########");
+		LOG_INF("ModelIdentification: %s", sim7080Information.modelIdentification.data());
+		LOG_INF("Pin status: %s", sim7080Information.pin.data());
+		LOG_INF("carrier= %s", sim7080Information.carrier.data());
+		LOG_INF("imei: %s", sim7080Information.imei.data());
+		LOG_INF("simId: %s", sim7080Information.simId.data());
+		LOG_INF("longitude: %s", sim7080Information.longitude.data());
+		LOG_INF("latitude: %s", sim7080Information.latitude.data());
+		LOG_INF("networkRegistration: %d", sim7080Information.networkRegistration);
+		LOG_INF("networkQuality: %d", sim7080Information.networkQuality);
+		LOG_INF("#########END#########");
 
 		k_msleep(1000);
 	}
