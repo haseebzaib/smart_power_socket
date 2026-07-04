@@ -65,7 +65,6 @@ namespace cellular
         get_model_identification();
         get_pin_status();
         get_carrier();
-        get_service_provider();
         //k_msleep(1000);
         get_imei();
         //k_msleep(1000);
@@ -74,6 +73,11 @@ namespace cellular
         {
             get_location();
             ensure_data_connection();
+        }
+        else
+        {
+            modemInformation_.dataConnected = 0;
+            copy_string_view_to_array("0.0.0.0", modemInformation_.ipAddress);
         }
 
         modemInfo = modemInformation_;
@@ -344,6 +348,8 @@ namespace cellular
         if (atResponse_.result != cellular::atEngine::atResult::OK)
         {
             LOG_ERR("CNACT?: query failed");
+            modemInformation_.dataConnected = 0;
+            copy_string_view_to_array("0.0.0.0", modemInformation_.ipAddress);
             return;
         }
 
@@ -354,6 +360,8 @@ namespace cellular
         if (!line.starts_with(prefix))
         {
             LOG_ERR("CNACT?: prefix not found");
+            modemInformation_.dataConnected = 0;
+            copy_string_view_to_array("0.0.0.0", modemInformation_.ipAddress);
             return;
         }
 
@@ -381,13 +389,32 @@ namespace cellular
 
         LOG_DBG("CNACT status: %d", status);
 
+        // Extract the quoted IP address, if present
+        std::size_t firstQuote = line.find('"');
+        std::size_t lastQuote = line.rfind('"');
+
+        if (firstQuote != std::string_view::npos &&
+            lastQuote != std::string_view::npos &&
+            lastQuote > firstQuote + 1)
+        {
+            std::string_view ip =
+                line.substr(firstQuote + 1, lastQuote - firstQuote - 1);
+            copy_string_view_to_array(ip, modemInformation_.ipAddress);
+        }
+        else
+        {
+            copy_string_view_to_array("0.0.0.0", modemInformation_.ipAddress);
+        }
+
         // 1 = activated, 2 = in operation -> connection is up
         if (status == 1 || status == 2)
         {
+            modemInformation_.dataConnected = 1;
             return;
         }
 
         // Deactivated -> re-run activation
+        modemInformation_.dataConnected = 0;
         LOG_WRN("Data context down, re-activating");
 
         std::array<char, 64> cmd{};
@@ -453,59 +480,6 @@ namespace cellular
         copy_string_view_to_array(carrier, modemInformation_.carrier);
     }
 
-    void sim7080::get_service_provider()
-    {
-        cellular::atEngine::atResponse atResponse_{};
-        std::string_view prefix = "+CSPN:";
-
-        atResponse_ = atEngine_.send_command(
-            atGetATCSPN,
-            prefix,
-            std::span<uint8_t>(data_.data(), data_.size()),
-            1000);
-
-        if (atResponse_.result != cellular::atEngine::atResult::OK)
-        {
-            copy_string_view_to_array("Error", modemInformation_.serviceProvider);
-            return;
-        }
-
-        std::string_view line = trim(std::string_view{
-            reinterpret_cast<const char *>(data_.data()),
-            atResponse_.responseLength});
-
-        LOG_DBG("CSPN: Line Data %.*s",
-                static_cast<int>(line.size()),
-                line.data());
-
-        if (!line.starts_with(prefix))
-        {
-            copy_string_view_to_array("Unknown", modemInformation_.serviceProvider);
-            return;
-        }
-
-        // +CSPN: "<spn>",<display mode> -> take the quoted service provider name
-        std::size_t firstQuote = line.find('"');
-        std::size_t lastQuote = line.rfind('"');
-
-        if (firstQuote == std::string_view::npos ||
-            lastQuote == std::string_view::npos ||
-            lastQuote <= firstQuote + 1)
-        {
-            // SIM has no SPN programmed
-            copy_string_view_to_array("Unknown", modemInformation_.serviceProvider);
-            return;
-        }
-
-        std::string_view spn =
-            line.substr(firstQuote + 1, lastQuote - firstQuote - 1);
-
-        LOG_DBG("CSPN: spn %.*s",
-                static_cast<int>(spn.size()),
-                spn.data());
-
-        copy_string_view_to_array(spn, modemInformation_.serviceProvider);
-    }
     void sim7080::get_imei()
     {
         cellular::atEngine::atResponse atResponse_;

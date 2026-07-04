@@ -34,13 +34,14 @@ namespace cellular
             std::array<char, 25> modelIdentification;
             std::array<char, 25> pin;
             std::array<char, 25> carrier;
-            std::array<char, 25> serviceProvider;
             std::array<char, 25> imei;
             std::array<char, 25> simId;
             std::array<char, 25> longitude;
             std::array<char, 25> latitude;
+            std::array<char, 25> ipAddress;
             int8_t networkRegistration;
             int8_t networkQuality;
+            int8_t dataConnected;
         };
 
         sim7080(const device *uart, const gpio_dt_spec pwrKey, const gpio_flags_t pwrKeyFlags);
@@ -57,7 +58,6 @@ namespace cellular
         void get_model_identification();
         void get_pin_status();
         void get_carrier();
-        void get_service_provider();
         void get_imei();
         void get_simId();
         void get_location();
@@ -108,7 +108,6 @@ namespace cellular
         /**get AT commands */
         const std::string_view atGetATCSQ = "AT+CSQ\r\n";
         const std::string_view atGetATCOPS = "AT+COPS?\r\n";
-        const std::string_view atGetATCSPN = "AT+CSPN?\r\n";
         const std::string_view atGetATCREG = "AT+CREG?\r\n";
         const std::string_view atGetATCLBS = "AT+CLBS=4,0\r\n";
         const std::string_view atGetATCNACT = "AT+CNACT?\r\n";
