@@ -34,6 +34,7 @@ namespace cellular
             std::array<char, 25> modelIdentification;
             std::array<char, 25> pin;
             std::array<char, 25> carrier;
+            std::array<char, 25> serviceProvider;
             std::array<char, 25> imei;
             std::array<char, 25> simId;
             std::array<char, 25> longitude;
@@ -56,9 +57,16 @@ namespace cellular
         void get_model_identification();
         void get_pin_status();
         void get_carrier();
+        void get_service_provider();
         void get_imei();
         void get_simId();
         void get_location();
+        void ensure_data_connection();
+
+        static constexpr int ipCommandRetries = 3;
+        cellular::atEngine::atResult send_with_retry(std::string_view command,
+                                                     int retries,
+                                                     uint32_t timeoutMs);
 
 
         template <std::size_t N>
@@ -86,8 +94,10 @@ namespace cellular
 
         /**set AT commands */
         const std::string_view atAT = "AT\r\n";
+        const std::string_view atATE0 = "ATE0\r\n";
         const std::string_view atSetATCREG = "AT+CREG=1\r\n";
         const std::string_view atSetATCOPS = "AT+COPS=0\r\n";
+        const std::string_view atSetATCOPSFmt = "AT+COPS=3,0\r\n";
         const std::string_view atSetATCGATT = "AT+CGATT=1\r\n";
         static constexpr const char *atSetATCGDCONT = "AT+CGDCONT=1,\"IP\",\"%s\"\r\n";
         static constexpr const char *atSetATCNCFG = "AT+CNCFG=0,1,\"%s\"\r\n";
@@ -97,6 +107,8 @@ namespace cellular
 
         /**get AT commands */
         const std::string_view atGetATCSQ = "AT+CSQ\r\n";
+        const std::string_view atGetATCOPS = "AT+COPS?\r\n";
+        const std::string_view atGetATCSPN = "AT+CSPN?\r\n";
         const std::string_view atGetATCREG = "AT+CREG?\r\n";
         const std::string_view atGetATCLBS = "AT+CLBS=4,0\r\n";
         const std::string_view atGetATCNACT = "AT+CNACT?\r\n";

@@ -1,12 +1,11 @@
 #include "at_engine.hpp"
 
-
 LOG_MODULE_REGISTER(at_engine, LOG_LEVEL_INF);
 
 namespace cellular
 {
 
-    atEngine::atEngine(const device *uart) :  lineBufferLength(0),rd_index(0),wr_index(0), uart_(uart, atEngine::rxCallback, this)
+    atEngine::atEngine(const device *uart) : lineBufferLength(0), rd_index(0), wr_index(0), uart_(uart, atEngine::rxCallback, this)
     {
     }
 
@@ -70,11 +69,10 @@ namespace cellular
         currentCommand.done = false;
         currentCommand.responseSeen = false;
         currentCommand.expectedPrefix = nullptr;
+        currentCommand.commandText = strip_line_ending(command);
         currentCommand.result = atResult::Timeout;
 
-   
-
-        	LOG_INF("SendCmd: %s", command.data());
+        LOG_INF("SendCmd: %s", command.data());
 
         uint32_t tick = 0;
         std::span<const uint8_t> bytes = std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(command.data()), command.size());
@@ -106,6 +104,7 @@ namespace cellular
         currentCommand.responseSeen = false;
         currentCommand.collectingResponse = false;
         currentCommand.expectedPrefix = expectedURC;
+        currentCommand.commandText = strip_line_ending(command);
         currentCommand.result = atResult::Timeout;
 
         commandResponse.fill(0);
@@ -159,7 +158,7 @@ namespace cellular
 
         if ((commandResponseLength + needed) > commandResponse.size())
         {
-            
+
             return false;
         }
 
@@ -176,6 +175,15 @@ namespace cellular
         return true;
     }
 
+    std::string_view atEngine::strip_line_ending(std::string_view text)
+    {
+        while (!text.empty() && (text.back() == '\r' || text.back() == '\n'))
+        {
+            text.remove_suffix(1);
+        }
+        return text;
+    }
+
     void atEngine::handle_line(std::string_view line)
     {
         if (line.empty())
@@ -185,6 +193,15 @@ namespace cellular
 
         if (currentCommand.active)
         {
+            // Drop the echoed command line (modem echo still on, e.g. before ATE0
+            // takes effect on a fresh power-up). Otherwise it would be saved as a
+            // bogus response line for prefix-less getters like AT+CGSN / AT+CCID.
+            if (!currentCommand.commandText.empty() &&
+                line == currentCommand.commandText)
+            {
+                return;
+            }
+
             if (line == "OK")
             {
                 currentCommand.result = atResult::OK;

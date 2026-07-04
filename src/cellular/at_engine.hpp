@@ -88,6 +88,7 @@ namespace cellular
     private:
         bool save_response(std::string_view line);
         void handle_line(std::string_view line);
+        static std::string_view strip_line_ending(std::string_view text);
   
         
         
@@ -110,6 +111,7 @@ namespace cellular
             bool collectingResponse = false;
 
             std::string_view expectedPrefix{};
+            std::string_view commandText{};
             atResult result = atResult::Timeout;
         };
 

@@ -25,26 +25,33 @@ namespace cellular
             LOG_DBG("GSM not responding, PWR Key pulse");
             pwr_key_pulse();
             k_msleep(5000);
+            atEngine_.processRx();
         }
 
-        atEngine_.send_command(atSetATCREG, 1000);
-        atEngine_.send_command(atSetATCOPS, 1000);
-        atEngine_.send_command(atSetATCGATT, 1000);
+        
+         atEngine_.send_command(atATE0, 1000);
+
+        send_with_retry(atSetATCREG, ipCommandRetries, 1000);
+        send_with_retry(atSetATCOPS, ipCommandRetries, 1000);
+        send_with_retry(atSetATCOPSFmt, ipCommandRetries, 1000);
+        send_with_retry(atSetATCGATT, ipCommandRetries, 1000);
+
         std::array<char, 64> cmd{};
         int len = std::snprintf(cmd.data(),
                                 cmd.size(),
                                 atSetATCGDCONT,
                                 pdpContext);
-        atEngine_.send_command(std::string_view{cmd.data(), len}, 1000);
+        send_with_retry(std::string_view{cmd.data(), len}, ipCommandRetries, 1000);
 
         int len1 = std::snprintf(cmd.data(),
                                  cmd.size(),
                                  atSetATCNCFG,
                                  pdpContext);
-        atEngine_.send_command(std::string_view{cmd.data(), len1}, 1000);
-        atEngine_.send_command(atSetATCNACT, 1000);
-        atEngine_.send_command(atSetATCNMP, 1000);
-        atEngine_.send_command(atSetATCMNB, 1000);
+        send_with_retry(std::string_view{cmd.data(), len1}, ipCommandRetries, 1000);
+
+        send_with_retry(atSetATCNMP, ipCommandRetries, 1000);
+        send_with_retry(atSetATCMNB, ipCommandRetries, 1000);
+        send_with_retry(atSetATCNACT, ipCommandRetries, 1000);
 
         return 0;
     }
@@ -52,11 +59,13 @@ namespace cellular
     void sim7080::loop(modemInformation &modemInfo)
     {
 
+           atEngine_.processRx();
         get_network();
         get_network_quality();
         get_model_identification();
         get_pin_status();
         get_carrier();
+        get_service_provider();
         //k_msleep(1000);
         get_imei();
         //k_msleep(1000);
@@ -64,9 +73,10 @@ namespace cellular
         if (modemInformation_.networkRegistration == 1 || modemInformation_.networkRegistration == 5)
         {
             get_location();
+            ensure_data_connection();
         }
 
-        modemInfo = modemInformation_; 
+        modemInfo = modemInformation_;
     }
 
     void sim7080::get_network_quality()
@@ -298,9 +308,203 @@ namespace cellular
 
         copy_string_view_to_array(data, modemInformation_.pin);
     }
+    cellular::atEngine::atResult sim7080::send_with_retry(std::string_view command,
+                                                          int retries,
+                                                          uint32_t timeoutMs)
+    {
+        cellular::atEngine::atResult result = cellular::atEngine::atResult::Timeout;
+
+        for (int attempt = 0; attempt < retries; ++attempt)
+        {
+            result = atEngine_.send_command(command, timeoutMs);
+
+            if (result == cellular::atEngine::atResult::OK)
+            {
+                return result;
+            }
+
+            LOG_WRN("Cmd failed (attempt %d/%d), retrying", attempt + 1, retries);
+            k_msleep(500);
+        }
+
+        return result;
+    }
+
+    void sim7080::ensure_data_connection()
+    {
+        cellular::atEngine::atResponse atResponse_{};
+        std::string_view prefix = "+CNACT:";
+
+        atResponse_ = atEngine_.send_command(
+            atGetATCNACT,
+            prefix,
+            std::span<uint8_t>(data_.data(), data_.size()),
+            1000);
+
+        if (atResponse_.result != cellular::atEngine::atResult::OK)
+        {
+            LOG_ERR("CNACT?: query failed");
+            return;
+        }
+
+        std::string_view line = trim(std::string_view{
+            reinterpret_cast<const char *>(data_.data()),
+            atResponse_.responseLength});
+
+        if (!line.starts_with(prefix))
+        {
+            LOG_ERR("CNACT?: prefix not found");
+            return;
+        }
+
+        // +CNACT: <pdpidx>,<status>,<address>  -> status is the field after the first comma
+        std::string_view data = trim(line.substr(prefix.size()));
+
+        std::size_t firstComma = data.find(',');
+        if (firstComma == std::string_view::npos)
+        {
+            LOG_ERR("CNACT?: unexpected format");
+            return;
+        }
+
+        std::string_view rest = trim(data.substr(firstComma + 1));
+        std::size_t secondComma = rest.find(',');
+        std::string_view statusText =
+            trim(secondComma == std::string_view::npos ? rest : rest.substr(0, secondComma));
+
+        int status = -1;
+        if (!parse_int(statusText, status))
+        {
+            LOG_ERR("CNACT?: status parse failed");
+            return;
+        }
+
+        LOG_DBG("CNACT status: %d", status);
+
+        // 1 = activated, 2 = in operation -> connection is up
+        if (status == 1 || status == 2)
+        {
+            return;
+        }
+
+        // Deactivated -> re-run activation
+        LOG_WRN("Data context down, re-activating");
+
+        std::array<char, 64> cmd{};
+        int len = std::snprintf(cmd.data(),
+                                cmd.size(),
+                                atSetATCNCFG,
+                                pdpContext);
+        send_with_retry(std::string_view{cmd.data(), len}, ipCommandRetries, 1000);
+        send_with_retry(atSetATCNACT, ipCommandRetries, 1000);
+    }
+
     void sim7080::get_carrier()
     {
-        copy_string_view_to_array("1NCE", modemInformation_.carrier);
+        cellular::atEngine::atResponse atResponse_{};
+        std::string_view prefix = "+COPS:";
+
+        atResponse_ = atEngine_.send_command(
+            atGetATCOPS,
+            prefix,
+            std::span<uint8_t>(data_.data(), data_.size()),
+            1000);
+
+        if (atResponse_.result != cellular::atEngine::atResult::OK)
+        {
+            copy_string_view_to_array("Error", modemInformation_.carrier);
+            return;
+        }
+
+        std::string_view line = trim(std::string_view{
+            reinterpret_cast<const char *>(data_.data()),
+            atResponse_.responseLength});
+
+        LOG_DBG("COPS: Line Data %.*s",
+                static_cast<int>(line.size()),
+                line.data());
+
+        if (!line.starts_with(prefix))
+        {
+            copy_string_view_to_array("Unknown", modemInformation_.carrier);
+            return;
+        }
+
+        // +COPS: <mode>,<format>,"<oper>",<AcT> -> take the quoted operator name
+        std::size_t firstQuote = line.find('"');
+        std::size_t lastQuote = line.rfind('"');
+
+        if (firstQuote == std::string_view::npos ||
+            lastQuote == std::string_view::npos ||
+            lastQuote <= firstQuote + 1)
+        {
+            // Not registered or name not available
+            copy_string_view_to_array("Unknown", modemInformation_.carrier);
+            return;
+        }
+
+        std::string_view carrier =
+            line.substr(firstQuote + 1, lastQuote - firstQuote - 1);
+
+        LOG_DBG("COPS: carrier %.*s",
+                static_cast<int>(carrier.size()),
+                carrier.data());
+
+        copy_string_view_to_array(carrier, modemInformation_.carrier);
+    }
+
+    void sim7080::get_service_provider()
+    {
+        cellular::atEngine::atResponse atResponse_{};
+        std::string_view prefix = "+CSPN:";
+
+        atResponse_ = atEngine_.send_command(
+            atGetATCSPN,
+            prefix,
+            std::span<uint8_t>(data_.data(), data_.size()),
+            1000);
+
+        if (atResponse_.result != cellular::atEngine::atResult::OK)
+        {
+            copy_string_view_to_array("Error", modemInformation_.serviceProvider);
+            return;
+        }
+
+        std::string_view line = trim(std::string_view{
+            reinterpret_cast<const char *>(data_.data()),
+            atResponse_.responseLength});
+
+        LOG_DBG("CSPN: Line Data %.*s",
+                static_cast<int>(line.size()),
+                line.data());
+
+        if (!line.starts_with(prefix))
+        {
+            copy_string_view_to_array("Unknown", modemInformation_.serviceProvider);
+            return;
+        }
+
+        // +CSPN: "<spn>",<display mode> -> take the quoted service provider name
+        std::size_t firstQuote = line.find('"');
+        std::size_t lastQuote = line.rfind('"');
+
+        if (firstQuote == std::string_view::npos ||
+            lastQuote == std::string_view::npos ||
+            lastQuote <= firstQuote + 1)
+        {
+            // SIM has no SPN programmed
+            copy_string_view_to_array("Unknown", modemInformation_.serviceProvider);
+            return;
+        }
+
+        std::string_view spn =
+            line.substr(firstQuote + 1, lastQuote - firstQuote - 1);
+
+        LOG_DBG("CSPN: spn %.*s",
+                static_cast<int>(spn.size()),
+                spn.data());
+
+        copy_string_view_to_array(spn, modemInformation_.serviceProvider);
     }
     void sim7080::get_imei()
     {

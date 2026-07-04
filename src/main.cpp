@@ -115,7 +115,8 @@ int main(void)
 		LOG_INF("#########Sim7080Information#########");
 		LOG_INF("ModelIdentification: %s", sim7080Information.modelIdentification.data());
 		LOG_INF("Pin status: %s", sim7080Information.pin.data());
-		LOG_INF("carrier= %s", sim7080Information.carrier.data());
+		LOG_INF("carrier (COPS)= %s", sim7080Information.carrier.data());
+		LOG_INF("serviceProvider (CSPN)= %s", sim7080Information.serviceProvider.data());
 		LOG_INF("imei: %s", sim7080Information.imei.data());
 		LOG_INF("simId: %s", sim7080Information.simId.data());
 		LOG_INF("longitude: %s", sim7080Information.longitude.data());
