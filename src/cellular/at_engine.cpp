@@ -161,7 +161,14 @@ namespace cellular
                                                      uint32_t timeoutMs)
     {
         // Phase 1: send the command line and wait for the '>' input prompt
-        currentCommand.active = false;
+        currentCommand.active = true;
+        currentCommand.done = false;
+        currentCommand.responseSeen = false;
+        currentCommand.collectingResponse = false;
+        currentCommand.expectedPrefix = {};
+        currentCommand.commandText = strip_line_ending(commandLine);
+        currentCommand.result = atResult::Timeout;
+
         promptSeen = false;
         waitingPrompt = true;
 
@@ -172,7 +179,7 @@ namespace cellular
             reinterpret_cast<const uint8_t *>(commandLine.data()), commandLine.size()));
 
         uint32_t tick = 0;
-        while (tick < timeoutMs && !promptSeen)
+        while (tick < timeoutMs && !promptSeen && !currentCommand.done)
         {
             processRx();
             tick++;
@@ -183,11 +190,17 @@ namespace cellular
 
         if (!promptSeen)
         {
+            atResult result = currentCommand.done ? currentCommand.result : atResult::Timeout;
+            currentCommand.active = false;
+
             // Abort the entry with ESC so the modem returns to command state
-            uint8_t esc = 0x1B;
-            uart_.writeIntr(std::span<const uint8_t>(&esc, 1));
-            LOG_ERR("SendPromptCmd: no '>' prompt");
-            return atResult::Timeout;
+            if (result == atResult::Timeout)
+            {
+                uint8_t esc = 0x1B;
+                uart_.writeIntr(std::span<const uint8_t>(&esc, 1));
+            }
+            LOG_ERR("SendPromptCmd: no '>' prompt, result %d", static_cast<int>(result));
+            return result;
         }
 
         // Drop the leftover "> " sitting in the line buffer

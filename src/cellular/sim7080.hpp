@@ -76,7 +76,6 @@ namespace cellular
 
         static constexpr std::size_t smsSingleMaxChars = 160;
         static constexpr std::size_t smsSegmentChars = 153;
-        uint8_t smsRef_ = 1;
 
         void get_network_quality();
         void get_network();
@@ -132,11 +131,12 @@ namespace cellular
 
         /**SMS AT commands */
         const std::string_view atSetATCMGF = "AT+CMGF=1\r\n";
+        const std::string_view atSetATCSMS = "AT+CSMS=1\r\n";
         const std::string_view atSetATCPMS = "AT+CPMS=\"SM\",\"SM\",\"SM\"\r\n";
         const std::string_view atGetATCMGLAll = "AT+CMGL=\"ALL\"\r\n";
         static constexpr const char *atSetATCMGD = "AT+CMGD=%d\r\n";
-        static constexpr const char *atSetATCMGS = "AT+CMGS=\"%.*s\"\r";
-        static constexpr const char *atSetATCMGSEX = "AT+CMGSEX=\"%.*s\",%d,%d,%d\r";
+        static constexpr const char *atSetATCMGS = "AT+CMGS=\"%.*s\"\r\n";
+        static constexpr const char *atSetATCMGSEX = "AT+CMGSEX=\"%.*s\",%d,%d,%d,%d\r\n";
 
         /**get AT commands */
         const std::string_view atGetATCSQ = "AT+CSQ\r\n";

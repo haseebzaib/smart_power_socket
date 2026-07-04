@@ -57,6 +57,7 @@ namespace cellular
 
         // SMS: text mode, and read/write/store all on SIM storage
         send_with_retry(atSetATCMGF, ipCommandRetries, 1000);
+        send_with_retry(atSetATCSMS, ipCommandRetries, 1000);
         send_with_retry(atSetATCPMS, ipCommandRetries, 1000);
 
         return 0;
@@ -894,7 +895,7 @@ namespace cellular
                                 number.data());
 
         cellular::atEngine::atResult result = atEngine_.send_prompt_command(
-            std::string_view{cmd.data(), len}, body, 1000);
+            std::string_view{cmd.data(), len}, body, 3000);
 
         if (result != cellular::atEngine::atResult::OK)
         {
@@ -917,14 +918,10 @@ namespace cellular
             total = 255; // clamp; anything beyond is dropped
         }
 
-        // One message reference shared by every segment so the receiver reassembles.
-        // Keep it in 1..255 - the modem rejects a reference of 0.
-        int mr = smsRef_;
-        smsRef_ = static_cast<uint8_t>(smsRef_ + 1);
-        if (smsRef_ == 0)
-        {
-            smsRef_ = 1;
-        }
+        // 2nd CMGSEX field is <mr>, the concatenation reference shared by every
+        // segment so the receiver can reassemble. Fixed like the datasheet example.
+        int mr = 190;
+        int toda = (!number.empty() && number.front() == '+') ? 145 : 129;
 
         for (std::size_t seg = 1; seg <= total; ++seg)
         {
@@ -947,12 +944,13 @@ namespace cellular
                                     atSetATCMGSEX,
                                     static_cast<int>(number.size()),
                                     number.data(),
+                                    toda,
                                     mr,
                                     static_cast<int>(seg),
                                     static_cast<int>(total));
 
             cellular::atEngine::atResult result = atEngine_.send_prompt_command(
-                std::string_view{cmd.data(), len}, chunk, 1000);
+                std::string_view{cmd.data(), len}, chunk, 60000);
 
             if (result != cellular::atEngine::atResult::OK)
             {
