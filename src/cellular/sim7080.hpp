@@ -39,9 +39,12 @@ namespace cellular
             std::array<char, 25> longitude;
             std::array<char, 25> latitude;
             std::array<char, 25> ipAddress;
+            std::array<char, 32> smsNumber;
+            std::array<char, 300> smsBody;
             int8_t networkRegistration;
             int8_t networkQuality;
             int8_t dataConnected;
+            int8_t smsReceived;
         };
 
         sim7080(const device *uart, const gpio_dt_spec pwrKey, const gpio_flags_t pwrKeyFlags);
@@ -49,10 +52,32 @@ namespace cellular
         sim7080(const sim7080 &) = delete;
         sim7080 &operator=(const sim7080 &) = delete;
 
+        struct smsMessage
+        {
+            std::array<char, 32> number;
+            std::array<char, 300> body;
+            bool valid;
+        };
+
         int init();
         void loop(modemInformation &modemInfo);
 
+        // Reads the oldest stored SMS into out, then deletes it from storage.
+        // Returns true if a message was read, false if the queue is empty.
+        bool read_next_sms(smsMessage &out);
+
+        // Sends an SMS; automatically switches to long/concatenated send
+        // (CMGSEX) when body exceeds a single SMS.
+        bool send_sms(std::string_view number, std::string_view body);
+
     private:
+        bool send_sms_single(std::string_view number, std::string_view body);
+        bool send_sms_long(std::string_view number, std::string_view body);
+
+        static constexpr std::size_t smsSingleMaxChars = 160;
+        static constexpr std::size_t smsSegmentChars = 153;
+        uint8_t smsRef_ = 0;
+
         void get_network_quality();
         void get_network();
         void get_model_identification();
@@ -104,6 +129,14 @@ namespace cellular
         const std::string_view atSetATCNMP = "AT+CNMP=38\r\n";
         const std::string_view atSetATCMNB = "AT+CMNB=1\r\n";
         const std::string_view atSetATCNACT = "AT+CNACT=0,2\r\n";
+
+        /**SMS AT commands */
+        const std::string_view atSetATCMGF = "AT+CMGF=1\r\n";
+        const std::string_view atSetATCPMS = "AT+CPMS=\"SM\",\"SM\",\"SM\"\r\n";
+        const std::string_view atGetATCMGLAll = "AT+CMGL=\"ALL\"\r\n";
+        static constexpr const char *atSetATCMGD = "AT+CMGD=%d\r\n";
+        static constexpr const char *atSetATCMGS = "AT+CMGS=\"%.*s\"\r";
+        static constexpr const char *atSetATCMGSEX = "AT+CMGSEX=\"%.*s\",%d,%d,%d\r";
 
         /**get AT commands */
         const std::string_view atGetATCSQ = "AT+CSQ\r\n";

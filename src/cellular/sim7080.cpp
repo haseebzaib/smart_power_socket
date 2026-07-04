@@ -55,6 +55,10 @@ namespace cellular
         send_with_retry(atSetATCMNB, ipCommandRetries, 1000);
         send_with_retry(atSetATCNACT, ipCommandRetries, 1000);
 
+        // SMS: text mode, and read/write/store all on SIM storage
+        send_with_retry(atSetATCMGF, ipCommandRetries, 1000);
+        send_with_retry(atSetATCPMS, ipCommandRetries, 1000);
+
         return 0;
     }
 
@@ -81,6 +85,19 @@ namespace cellular
         {
             modemInformation_.dataConnected = 0;
             copy_string_view_to_array("0.0.0.0", modemInformation_.ipAddress);
+        }
+
+        // Poll for the next queued incoming SMS command (ALL, FIFO oldest first)
+        smsMessage sms{};
+        if (read_next_sms(sms))
+        {
+            modemInformation_.smsReceived = 1;
+            modemInformation_.smsNumber = sms.number;
+            modemInformation_.smsBody = sms.body;
+        }
+        else
+        {
+            modemInformation_.smsReceived = 0;
         }
 
         modemInfo = modemInformation_;
@@ -764,6 +781,183 @@ namespace cellular
         k_msleep(4000);
         pwrKey_.set(0);
         k_msleep(2000);
+    }
+
+    bool sim7080::read_next_sms(smsMessage &out)
+    {
+        out.valid = false;
+        out.number.fill('\0');
+        out.body.fill('\0');
+
+        cellular::atEngine::atResponse atResponse_{};
+        std::string_view prefix = "+CMGL:";
+
+        atResponse_ = atEngine_.send_command(
+            atGetATCMGLAll,
+            prefix,
+            std::span<uint8_t>(data_.data(), data_.size()),
+            5000);
+
+        if (atResponse_.result != cellular::atEngine::atResult::OK ||
+            atResponse_.responseLength == 0)
+        {
+            return false; // no messages queued
+        }
+
+        std::string_view buffer = trim(std::string_view{
+            reinterpret_cast<const char *>(data_.data()),
+            atResponse_.responseLength});
+
+        // Response can list several messages; we only handle the first (oldest)
+        //   +CMGL: <index>,"<stat>","<oa>",[<alpha>],[<scts>]
+        //   <body>
+        std::size_t nl = buffer.find('\n');
+        std::string_view header =
+            trim(nl == std::string_view::npos ? buffer : buffer.substr(0, nl));
+        std::string_view body =
+            (nl == std::string_view::npos) ? std::string_view{} : buffer.substr(nl + 1);
+
+        // Keep only this message's body (cut before the next +CMGL entry)
+        std::size_t nextEntry = body.find(prefix);
+        if (nextEntry != std::string_view::npos)
+        {
+            body = body.substr(0, nextEntry);
+        }
+        body = trim(body);
+
+        if (!header.starts_with(prefix))
+        {
+            LOG_ERR("CMGL: header prefix missing");
+            return false;
+        }
+
+        std::string_view data = trim(header.substr(prefix.size()));
+
+        // index is everything up to the first comma
+        std::size_t firstComma = data.find(',');
+        if (firstComma == std::string_view::npos)
+        {
+            LOG_ERR("CMGL: malformed header");
+            return false;
+        }
+
+        int index = -1;
+        if (!parse_int(trim(data.substr(0, firstComma)), index))
+        {
+            LOG_ERR("CMGL: index parse failed");
+            return false;
+        }
+
+        // Sender number <oa> is the 2nd quoted field (1st quoted is <stat>)
+        std::size_t q1 = header.find('"');
+        std::size_t q2 =
+            (q1 == std::string_view::npos) ? std::string_view::npos : header.find('"', q1 + 1);
+        std::size_t q3 =
+            (q2 == std::string_view::npos) ? std::string_view::npos : header.find('"', q2 + 1);
+        std::size_t q4 =
+            (q3 == std::string_view::npos) ? std::string_view::npos : header.find('"', q3 + 1);
+
+        if (q3 != std::string_view::npos && q4 != std::string_view::npos && q4 > q3 + 1)
+        {
+            copy_string_view_to_array(header.substr(q3 + 1, q4 - q3 - 1), out.number);
+        }
+
+        copy_string_view_to_array(body, out.body);
+        out.valid = true;
+
+        LOG_INF("SMS from %s: %s", out.number.data(), out.body.data());
+
+        // Delete this message so the next queued one surfaces
+        std::array<char, 32> cmd{};
+        int len = std::snprintf(cmd.data(), cmd.size(), atSetATCMGD, index);
+        send_with_retry(std::string_view{cmd.data(), len}, ipCommandRetries, 5000);
+
+        return true;
+    }
+
+    bool sim7080::send_sms(std::string_view number, std::string_view body)
+    {
+        if (body.size() <= smsSingleMaxChars)
+        {
+            return send_sms_single(number, body);
+        }
+        return send_sms_long(number, body);
+    }
+
+    bool sim7080::send_sms_single(std::string_view number, std::string_view body)
+    {
+        std::array<char, 48> cmd{};
+        int len = std::snprintf(cmd.data(),
+                                cmd.size(),
+                                atSetATCMGS,
+                                static_cast<int>(number.size()),
+                                number.data());
+
+        cellular::atEngine::atResult result = atEngine_.send_prompt_command(
+            std::string_view{cmd.data(), len}, body, 1000);
+
+        if (result != cellular::atEngine::atResult::OK)
+        {
+            LOG_ERR("CMGS: send failed");
+            return false;
+        }
+
+        return true;
+    }
+
+    bool sim7080::send_sms_long(std::string_view number, std::string_view body)
+    {
+        std::size_t total = (body.size() + smsSegmentChars - 1) / smsSegmentChars;
+        if (total < 2)
+        {
+            total = 2; // CMGSEX requires at least 2 segments
+        }
+        if (total > 255)
+        {
+            total = 255; // clamp; anything beyond is dropped
+        }
+
+        // One message reference shared by every segment so the receiver reassembles
+        int mr = smsRef_;
+        smsRef_ = static_cast<uint8_t>(smsRef_ + 1);
+
+        for (std::size_t seg = 1; seg <= total; ++seg)
+        {
+            std::size_t offset = (seg - 1) * smsSegmentChars;
+            if (offset >= body.size())
+            {
+                break;
+            }
+
+            std::size_t chunkLen = body.size() - offset;
+            if (chunkLen > smsSegmentChars)
+            {
+                chunkLen = smsSegmentChars;
+            }
+            std::string_view chunk = body.substr(offset, chunkLen);
+
+            std::array<char, 64> cmd{};
+            int len = std::snprintf(cmd.data(),
+                                    cmd.size(),
+                                    atSetATCMGSEX,
+                                    static_cast<int>(number.size()),
+                                    number.data(),
+                                    mr,
+                                    static_cast<int>(seg),
+                                    static_cast<int>(total));
+
+            cellular::atEngine::atResult result = atEngine_.send_prompt_command(
+                std::string_view{cmd.data(), len}, chunk, 1000);
+
+            if (result != cellular::atEngine::atResult::OK)
+            {
+                LOG_ERR("CMGSEX: segment %d/%d failed",
+                        static_cast<int>(seg), static_cast<int>(total));
+                return false;
+            }
+        }
+
+        return true;
     }
 
 }

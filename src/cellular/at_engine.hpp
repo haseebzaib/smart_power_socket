@@ -83,7 +83,13 @@ namespace cellular
          */
         atResponse send_command(std::string_view command, std::string_view expectedURC, std::span<uint8_t> expectedResponse,
                                uint32_t timeoutMs);
-        
+        /**
+         * Two-phase send for SMS: writes commandLine, waits for the '>' input
+         * prompt, then writes payload terminated by Ctrl-Z and waits for OK.
+         */
+        atResult send_prompt_command(std::string_view commandLine, std::string_view payload,
+                                     uint32_t timeoutMs);
+
 
     private:
         bool save_response(std::string_view line);
@@ -116,6 +122,9 @@ namespace cellular
         };
 
         pendingCommand currentCommand{};
+
+        bool waitingPrompt = false;
+        bool promptSeen = false;
 
         std::array<uint8_t, 4096> rxBuffer;
         std::array<uint8_t,1024> commandResponse;

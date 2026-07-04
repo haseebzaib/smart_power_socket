@@ -35,6 +35,11 @@ namespace cellular
 
     void atEngine::onRxByte(uint8_t byte)
     {
+        if (waitingPrompt && byte == '>')
+        {
+            promptSeen = true;
+        }
+
         if (byte == '\r')
         {
             return;
@@ -149,6 +154,77 @@ namespace cellular
         currentCommand.active = false;
 
         return response;
+    }
+
+    atEngine::atResult atEngine::send_prompt_command(std::string_view commandLine,
+                                                     std::string_view payload,
+                                                     uint32_t timeoutMs)
+    {
+        // Phase 1: send the command line and wait for the '>' input prompt
+        currentCommand.active = false;
+        promptSeen = false;
+        waitingPrompt = true;
+
+        LOG_INF("SendPromptCmd: %.*s",
+                static_cast<int>(commandLine.size()), commandLine.data());
+
+        uart_.writeIntr(std::span<const uint8_t>(
+            reinterpret_cast<const uint8_t *>(commandLine.data()), commandLine.size()));
+
+        uint32_t tick = 0;
+        while (tick < timeoutMs && !promptSeen)
+        {
+            processRx();
+            tick++;
+            k_msleep(1);
+        }
+
+        waitingPrompt = false;
+
+        if (!promptSeen)
+        {
+            // Abort the entry with ESC so the modem returns to command state
+            uint8_t esc = 0x1B;
+            uart_.writeIntr(std::span<const uint8_t>(&esc, 1));
+            LOG_ERR("SendPromptCmd: no '>' prompt");
+            return atResult::Timeout;
+        }
+
+        // Drop the leftover "> " sitting in the line buffer
+        lineBufferLength = 0;
+
+        // Phase 2: send payload terminated by Ctrl-Z, wait for OK/ERROR
+        currentCommand.active = true;
+        currentCommand.done = false;
+        currentCommand.responseSeen = false;
+        currentCommand.collectingResponse = false;
+        currentCommand.expectedPrefix = {};
+        currentCommand.commandText = {};
+        currentCommand.result = atResult::Timeout;
+
+        commandResponse.fill(0);
+        commandResponseLength = 0;
+
+        uart_.writeIntr(std::span<const uint8_t>(
+            reinterpret_cast<const uint8_t *>(payload.data()), payload.size()));
+
+        uint8_t ctrlZ = 0x1A;
+        uart_.writeIntr(std::span<const uint8_t>(&ctrlZ, 1));
+
+        tick = 0;
+        while (tick < timeoutMs)
+        {
+            processRx();
+            if (currentCommand.done)
+            {
+                break;
+            }
+            tick++;
+            k_msleep(1);
+        }
+
+        currentCommand.active = false;
+        return currentCommand.done ? currentCommand.result : atResult::Timeout;
     }
 
     bool atEngine::save_response(std::string_view line)

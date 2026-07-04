@@ -126,6 +126,13 @@ int main(void)
 		LOG_INF("networkQuality: %d", sim7080Information.networkQuality);
 		LOG_INF("dataConnected: %d", sim7080Information.dataConnected);
 		LOG_INF("ipAddress: %s", sim7080Information.ipAddress.data());
+		LOG_INF("smsReceived: %d", sim7080Information.smsReceived);
+		if (sim7080Information.smsReceived)
+		{
+			LOG_INF("smsNumber: %s", sim7080Information.smsNumber.data());
+			LOG_INF("smsBody: %s", sim7080Information.smsBody.data());
+			modemSim7080.send_sms(std::string_view{sim7080Information.smsNumber.data()}, "Received");
+		}
 		LOG_INF("#########END#########");
 
 		k_msleep(1000);
