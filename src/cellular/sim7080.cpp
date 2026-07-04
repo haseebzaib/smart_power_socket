@@ -20,6 +20,8 @@ namespace cellular
         pwrKey_.init();
         atEngine_.init();
 
+        LOG_INF("GSM Init Started");
+
         if (atEngine_.send_command(atAT, 1000) != cellular::atEngine::atResult::OK)
         {
             LOG_DBG("GSM not responding, PWR Key pulse");
@@ -65,14 +67,15 @@ namespace cellular
         get_model_identification();
         get_pin_status();
         get_carrier();
-        //k_msleep(1000);
         get_imei();
-        //k_msleep(1000);
         get_simId();
+         k_msleep(1000);
         if (modemInformation_.networkRegistration == 1 || modemInformation_.networkRegistration == 5)
         {
             get_location();
+             k_msleep(1000);
             ensure_data_connection();
+             k_msleep(1000);
         }
         else
         {
@@ -353,68 +356,86 @@ namespace cellular
             return;
         }
 
-        std::string_view line = trim(std::string_view{
+        std::string_view buffer = trim(std::string_view{
             reinterpret_cast<const char *>(data_.data()),
             atResponse_.responseLength});
 
-        if (!line.starts_with(prefix))
+        // AT+CNACT? returns one line per PDP context (0..3):
+        //   +CNACT: <pdpidx>,<status>,"<ip>"
+        // Only context 0 matters here - it's the one we activate with CNACT=0,2.
+        int status = -1;
+        std::string_view ip{"0.0.0.0"};
+        bool found = false;
+
+        std::string_view rem = buffer;
+        while (!rem.empty())
         {
-            LOG_ERR("CNACT?: prefix not found");
+            std::size_t nl = rem.find('\n');
+            std::string_view oneLine =
+                trim(nl == std::string_view::npos ? rem : rem.substr(0, nl));
+            rem = (nl == std::string_view::npos) ? std::string_view{} : rem.substr(nl + 1);
+
+            if (!oneLine.starts_with(prefix))
+            {
+                continue;
+            }
+
+            // <pdpidx>,<status>,"<ip>"
+            std::string_view data = trim(oneLine.substr(prefix.size()));
+
+            std::size_t firstComma = data.find(',');
+            if (firstComma == std::string_view::npos)
+            {
+                continue;
+            }
+
+            int pdpidx = -1;
+            if (!parse_int(trim(data.substr(0, firstComma)), pdpidx) || pdpidx != 0)
+            {
+                continue; // not our context
+            }
+
+            std::string_view rest = trim(data.substr(firstComma + 1));
+            std::size_t secondComma = rest.find(',');
+            parse_int(trim(secondComma == std::string_view::npos
+                               ? rest
+                               : rest.substr(0, secondComma)),
+                      status);
+
+            std::size_t firstQuote = oneLine.find('"');
+            std::size_t lastQuote = oneLine.rfind('"');
+            if (firstQuote != std::string_view::npos &&
+                lastQuote != std::string_view::npos &&
+                lastQuote > firstQuote + 1)
+            {
+                ip = oneLine.substr(firstQuote + 1, lastQuote - firstQuote - 1);
+            }
+
+            found = true;
+            break;
+        }
+
+        if (!found)
+        {
+            LOG_ERR("CNACT?: context 0 not found");
             modemInformation_.dataConnected = 0;
             copy_string_view_to_array("0.0.0.0", modemInformation_.ipAddress);
             return;
         }
 
-        // +CNACT: <pdpidx>,<status>,<address>  -> status is the field after the first comma
-        std::string_view data = trim(line.substr(prefix.size()));
-
-        std::size_t firstComma = data.find(',');
-        if (firstComma == std::string_view::npos)
-        {
-            LOG_ERR("CNACT?: unexpected format");
-            return;
-        }
-
-        std::string_view rest = trim(data.substr(firstComma + 1));
-        std::size_t secondComma = rest.find(',');
-        std::string_view statusText =
-            trim(secondComma == std::string_view::npos ? rest : rest.substr(0, secondComma));
-
-        int status = -1;
-        if (!parse_int(statusText, status))
-        {
-            LOG_ERR("CNACT?: status parse failed");
-            return;
-        }
-
-        LOG_DBG("CNACT status: %d", status);
-
-        // Extract the quoted IP address, if present
-        std::size_t firstQuote = line.find('"');
-        std::size_t lastQuote = line.rfind('"');
-
-        if (firstQuote != std::string_view::npos &&
-            lastQuote != std::string_view::npos &&
-            lastQuote > firstQuote + 1)
-        {
-            std::string_view ip =
-                line.substr(firstQuote + 1, lastQuote - firstQuote - 1);
-            copy_string_view_to_array(ip, modemInformation_.ipAddress);
-        }
-        else
-        {
-            copy_string_view_to_array("0.0.0.0", modemInformation_.ipAddress);
-        }
+        LOG_DBG("CNACT ctx0 status: %d", status);
 
         // 1 = activated, 2 = in operation -> connection is up
         if (status == 1 || status == 2)
         {
             modemInformation_.dataConnected = 1;
+            copy_string_view_to_array(ip, modemInformation_.ipAddress);
             return;
         }
 
         // Deactivated -> re-run activation
         modemInformation_.dataConnected = 0;
+        copy_string_view_to_array("0.0.0.0", modemInformation_.ipAddress);
         LOG_WRN("Data context down, re-activating");
 
         std::array<char, 64> cmd{};

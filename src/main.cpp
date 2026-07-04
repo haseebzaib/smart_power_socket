@@ -54,6 +54,8 @@ std::array<int, 4> energyMeterErr;
 
 std::array<sensors::hlw811x::measurements, 4> acMeasurements;
 
+std::string_view alert_number = "1234567890";
+
 int main(void)
 {
 
