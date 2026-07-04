@@ -56,6 +56,15 @@ std::array<sensors::hlw811x::measurements, 4> acMeasurements;
 
 std::string_view alert_number = "1234567890";
 
+// ~270 chars -> forces CMGSEX long/concatenated send (2 segments of 153).
+// Segment markers let you verify order/reassembly on the 1NCE portal.
+std::string_view longTestMessage =
+	"Long SMS test from smart power socket over 1NCE. "
+	"If you can read this as ONE message, concatenation works. "
+	"SEG-A 111111111 222222222 333333333 444444444 555555555 "
+	"SEG-B 666666666 777777777 888888888 999999999 000000000 "
+	"End of long message test.";
+
 int main(void)
 {
 
@@ -131,7 +140,7 @@ int main(void)
 		{
 			LOG_INF("smsNumber: %s", sim7080Information.smsNumber.data());
 			LOG_INF("smsBody: %s", sim7080Information.smsBody.data());
-			modemSim7080.send_sms(std::string_view{sim7080Information.smsNumber.data()}, "Received");
+			modemSim7080.send_sms(std::string_view{sim7080Information.smsNumber.data()}, longTestMessage);
 		}
 		LOG_INF("#########END#########");
 

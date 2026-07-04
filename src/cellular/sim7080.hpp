@@ -76,7 +76,7 @@ namespace cellular
 
         static constexpr std::size_t smsSingleMaxChars = 160;
         static constexpr std::size_t smsSegmentChars = 153;
-        uint8_t smsRef_ = 0;
+        uint8_t smsRef_ = 1;
 
         void get_network_quality();
         void get_network();

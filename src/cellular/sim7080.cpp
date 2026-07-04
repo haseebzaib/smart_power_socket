@@ -917,9 +917,14 @@ namespace cellular
             total = 255; // clamp; anything beyond is dropped
         }
 
-        // One message reference shared by every segment so the receiver reassembles
+        // One message reference shared by every segment so the receiver reassembles.
+        // Keep it in 1..255 - the modem rejects a reference of 0.
         int mr = smsRef_;
         smsRef_ = static_cast<uint8_t>(smsRef_ + 1);
+        if (smsRef_ == 0)
+        {
+            smsRef_ = 1;
+        }
 
         for (std::size_t seg = 1; seg <= total; ++seg)
         {
