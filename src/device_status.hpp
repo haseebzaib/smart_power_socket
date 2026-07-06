@@ -20,6 +20,7 @@ namespace device_status
         bool utilityOn;
         std::array<bool, outletCount> outletOn;
         std::array<bool, outletCount> outletLoadConnected;
+        std::array<sensors::hlw811x::measurements, outletCount> outletMeasurements;
         int rssiDbm;
         const char *latitude;
         const char *longitude;
@@ -40,5 +41,6 @@ namespace device_status
                            uint32_t heartBeatDaysMilli);
 
     int format_status_message(const snapshot &status, char *buffer, std::size_t bufferSize);
+    int format_outlet_report(const snapshot &status, char *buffer, std::size_t bufferSize);
 
 }

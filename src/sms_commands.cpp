@@ -121,8 +121,20 @@ namespace sms_commands
 
         if (heading.empty())
         {
-            return ctx.modem.send_sms(recipient,
-                                      std::string_view{statusText.data(), static_cast<std::size_t>(statusLen)});
+            bool statusSent = ctx.modem.send_sms(recipient,
+                                                 std::string_view{statusText.data(), static_cast<std::size_t>(statusLen)});
+
+            std::array<char, 160> outletReport{};
+            int outletLen = device_status::format_outlet_report(status, outletReport.data(), outletReport.size());
+            if (outletLen <= 0 || static_cast<std::size_t>(outletLen) >= outletReport.size())
+            {
+                LOG_ERR("outlet report formatting failed");
+                return false;
+            }
+
+            bool outletSent = ctx.modem.send_sms(recipient,
+                                                 std::string_view{outletReport.data(), static_cast<std::size_t>(outletLen)});
+            return statusSent && outletSent;
         }
 
         std::array<char, 192> response{};
@@ -140,8 +152,20 @@ namespace sms_commands
             return false;
         }
 
-        return ctx.modem.send_sms(recipient,
-                                  std::string_view{response.data(), static_cast<std::size_t>(responseLen)});
+        bool statusSent = ctx.modem.send_sms(recipient,
+                                             std::string_view{response.data(), static_cast<std::size_t>(responseLen)});
+
+        std::array<char, 160> outletReport{};
+        int outletLen = device_status::format_outlet_report(status, outletReport.data(), outletReport.size());
+        if (outletLen <= 0 || static_cast<std::size_t>(outletLen) >= outletReport.size())
+        {
+            LOG_ERR("outlet report formatting failed");
+            return false;
+        }
+
+        bool outletSent = ctx.modem.send_sms(recipient,
+                                             std::string_view{outletReport.data(), static_cast<std::size_t>(outletLen)});
+        return statusSent && outletSent;
     }
 
     void handle_get_status(const context &ctx,
