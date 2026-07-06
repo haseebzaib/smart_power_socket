@@ -88,12 +88,12 @@ int main(void)
 		energyMeterErr[meter - 1] = energyMeters.configureIndividual(meter, baselineRatio, baselinePga);
 	}
 
-	relay1.set(1);
-	relay2.set(1);
-	relay3.set(1);
-	relay4.set(1);
+	relay1.set(0);
+	relay2.set(0);
+	relay3.set(0);
+	relay4.set(0);
 
-	k_msleep(5000);
+	// k_msleep(5000);
 
 	modemSim7080.init();
 
@@ -166,7 +166,7 @@ int main(void)
 		}
 		LOG_INF("#########END#########");
 
-		k_msleep(1000);
+		k_msleep(500);
 	}
 	return 0;
 }

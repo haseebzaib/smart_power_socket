@@ -23,18 +23,21 @@ namespace cellular
         LOG_INF("GSM Init Started");
 
         pwr_key_pulse();
-        k_msleep(10000);
-
+        k_msleep(25000);
+        send_with_retry(atAT, 10, defaultCommandTimeoutMs);
+        atEngine_.processRx();
         if (atEngine_.send_command(atAT, defaultCommandTimeoutMs) != cellular::atEngine::atResult::OK)
         {
+            atEngine_.processRx();
             LOG_DBG("GSM not responding, PWR Key pulse");
             pwr_key_pulse();
-            k_msleep(10000);
+            k_msleep(25000);
             atEngine_.processRx();
         }
 
-        
-         atEngine_.send_command(atATE0, defaultCommandTimeoutMs);
+        // atEngine_.send_command(atATE0, defaultCommandTimeoutMs);
+        send_with_retry(atAT, 10, defaultCommandTimeoutMs);
+        send_with_retry(atATE0, 5, defaultCommandTimeoutMs);
 
         send_with_retry(atSetATCREG, ipCommandRetries, defaultCommandTimeoutMs);
         send_with_retry(atSetATCOPS, ipCommandRetries, defaultCommandTimeoutMs);
@@ -69,7 +72,7 @@ namespace cellular
     void sim7080::loop(modemInformation &modemInfo)
     {
 
-           atEngine_.processRx();
+        atEngine_.processRx();
         get_network();
         get_network_quality();
         get_model_identification();
@@ -77,13 +80,13 @@ namespace cellular
         get_carrier();
         get_imei();
         get_simId();
-         k_msleep(1000);
+        // k_msleep(1000);
         if (modemInformation_.networkRegistration == 1 || modemInformation_.networkRegistration == 5)
         {
             get_location();
-             k_msleep(1000);
+            // k_msleep(1000);
             ensure_data_connection();
-             k_msleep(1000);
+            // k_msleep(1000);
         }
         else
         {
@@ -881,11 +884,11 @@ namespace cellular
 
     bool sim7080::send_sms(std::string_view number, std::string_view body)
     {
-       // if (body.size() <= smsSingleMaxChars)
-       // {
-            return send_sms_single(number, body);
-       // }
-       // return send_sms_long(number, body);
+        // if (body.size() <= smsSingleMaxChars)
+        // {
+        return send_sms_single(number, body);
+        // }
+        // return send_sms_long(number, body);
     }
 
     bool sim7080::send_sms_single(std::string_view number, std::string_view body)
