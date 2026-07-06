@@ -160,6 +160,19 @@ namespace cellular
                                                      std::string_view payload,
                                                      uint32_t timeoutMs)
     {
+        uint8_t staleByte{};
+        uint32_t staleCount = 0;
+        while (pop_single(staleByte) == 0)
+        {
+            staleCount++;
+        }
+        lineBufferLength = 0;
+
+        if (staleCount > 0)
+        {
+            LOG_WRN("SendPromptCmd: dropped %u stale rx bytes", staleCount);
+        }
+
         // Phase 1: send the command line and wait for the '>' input prompt
         currentCommand.active = true;
         currentCommand.done = false;

@@ -22,6 +22,9 @@ namespace cellular
 
         LOG_INF("GSM Init Started");
 
+        pwr_key_pulse();
+        k_msleep(5000);
+
         if (atEngine_.send_command(atAT, 1000) != cellular::atEngine::atResult::OK)
         {
             LOG_DBG("GSM not responding, PWR Key pulse");
@@ -895,11 +898,11 @@ namespace cellular
                                 number.data());
 
         cellular::atEngine::atResult result = atEngine_.send_prompt_command(
-            std::string_view{cmd.data(), len}, body, 3000);
+            std::string_view{cmd.data(), len}, body, 60000);
 
         if (result != cellular::atEngine::atResult::OK)
         {
-            LOG_ERR("CMGS: send failed");
+            LOG_ERR("CMGS: send failed, result %d", static_cast<int>(result));
             return false;
         }
 

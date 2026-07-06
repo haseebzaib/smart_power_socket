@@ -25,7 +25,7 @@ namespace device_status
 
     bool outlet_on(hardware::gpioCon &relay)
     {
-        return relay.get() > 0;
+        return relay.get() == 0;
     }
 
     bool outlet_load_connected(const sensors::hlw811x::measurements &measurement)
