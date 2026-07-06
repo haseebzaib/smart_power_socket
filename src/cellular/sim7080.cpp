@@ -878,11 +878,11 @@ namespace cellular
 
     bool sim7080::send_sms(std::string_view number, std::string_view body)
     {
-        if (body.size() <= smsSingleMaxChars)
-        {
+       // if (body.size() <= smsSingleMaxChars)
+       // {
             return send_sms_single(number, body);
-        }
-        return send_sms_long(number, body);
+       // }
+       // return send_sms_long(number, body);
     }
 
     bool sim7080::send_sms_single(std::string_view number, std::string_view body)

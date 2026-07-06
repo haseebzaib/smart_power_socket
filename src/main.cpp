@@ -8,6 +8,7 @@
 #include <cstring>
 #include <iostream>
 #include <span>
+#include <string_view>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/ring_buffer.h>
@@ -19,6 +20,7 @@
 #include "sensors/hlw811x.hpp"
 #include "cellular/at_engine.hpp"
 #include "cellular/sim7080.hpp"
+#include "sms_commands.hpp"
 
 LOG_MODULE_REGISTER(mainCpp, LOG_LEVEL_INF);
 
@@ -53,20 +55,24 @@ const hlw811x_resistor_ratio baselineRatio = {
 std::array<int, 4> energyMeterErr;
 
 std::array<sensors::hlw811x::measurements, 4> acMeasurements;
+std::array<hardware::gpioCon *, device_status::outletCount> outletRelays = {{
+	&relay1,
+	&relay2,
+	&relay3,
+	&relay4,
+}};
 
 std::string_view alert_number = "1234567890";
+uint32_t heartBeatDaysMilli = 0;
 
-// ~270 chars -> forces CMGSEX long/concatenated send (2 segments of 153).
-// Segment markers let you verify order/reassembly on the 1NCE portal.
-std::string_view longTestMessage =
-	"Long SMS test from smart power socket over 1NCE. "
-	"If you can read this as ONE message, concatenation works. "
-	"SEG-A 111111111 222222222 333333333 444444444 555555555 "
-	"SEG-B 666666666 777777777 888888888 999999999 000000000 "
-	"End of long message test.";
+bool sms_network_ready(const cellular::sim7080::modemInformation &modemInfo)
+{
+	return modemInfo.networkRegistration == 1 || modemInfo.networkRegistration == 5;
+}
 
 int main(void)
 {
+	const int64_t bootTimeMs = k_uptime_get();
 
 	utilityPwrLed.init();
 	cellularLed.init();
@@ -92,6 +98,7 @@ int main(void)
 	modemSim7080.init();
 
 	cellular::sim7080::modemInformation sim7080Information{};
+	bool startupStatusSent = false;
 
 	while (1)
 	{
@@ -136,11 +143,26 @@ int main(void)
 		LOG_INF("dataConnected: %d", sim7080Information.dataConnected);
 		LOG_INF("ipAddress: %s", sim7080Information.ipAddress.data());
 		LOG_INF("smsReceived: %d", sim7080Information.smsReceived);
+
+		sms_commands::context smsContext{
+			.modem = modemSim7080,
+			.modemInformation = sim7080Information,
+			.relays = std::span<hardware::gpioCon *, device_status::outletCount>{outletRelays},
+			.measurements = std::span<const sensors::hlw811x::measurements, device_status::outletCount>{acMeasurements},
+			.bootTimeMs = bootTimeMs,
+			.heartBeatDaysMilli = heartBeatDaysMilli,
+		};
+
+		if (!startupStatusSent && sms_network_ready(sim7080Information))
+		{
+			startupStatusSent = sms_commands::send_status(smsContext, alert_number, "SPS is starting");
+		}
+
 		if (sim7080Information.smsReceived)
 		{
 			LOG_INF("smsNumber: %s", sim7080Information.smsNumber.data());
 			LOG_INF("smsBody: %s", sim7080Information.smsBody.data());
-			modemSim7080.send_sms(std::string_view{sim7080Information.smsNumber.data()}, longTestMessage);
+			sms_commands::handle(smsContext);
 		}
 		LOG_INF("#########END#########");
 

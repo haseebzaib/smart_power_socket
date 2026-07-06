@@ -7,6 +7,8 @@ project(smart_power_socket)
 
 target_sources(app PRIVATE
 	src/main.cpp
+	src/sms_commands.cpp
+	src/device_status.cpp
 	src/hardware/gpio_con.cpp
 	src/hardware/uart_con.cpp
 	src/sensors/hlw811x.cpp
