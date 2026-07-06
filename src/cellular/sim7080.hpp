@@ -88,6 +88,9 @@ namespace cellular
         void ensure_data_connection();
 
         static constexpr int ipCommandRetries = 3;
+        static constexpr uint32_t defaultCommandTimeoutMs = 5000;
+        static constexpr uint32_t locationCommandTimeoutMs = 30000;
+        static constexpr uint32_t smsSubmitTimeoutMs = 60000;
         cellular::atEngine::atResult send_with_retry(std::string_view command,
                                                      int retries,
                                                      uint32_t timeoutMs);

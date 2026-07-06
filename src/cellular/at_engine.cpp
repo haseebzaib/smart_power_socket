@@ -40,12 +40,7 @@ namespace cellular
             promptSeen = true;
         }
 
-        if (byte == '\r')
-        {
-            return;
-        }
-
-        if (byte == '\n')
+        if (byte == '\r' || byte == '\n')
         {
             if (lineBufferLength > 0)
             {

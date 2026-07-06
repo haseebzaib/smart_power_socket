@@ -25,7 +25,7 @@ namespace cellular
         pwr_key_pulse();
         k_msleep(5000);
 
-        if (atEngine_.send_command(atAT, 1000) != cellular::atEngine::atResult::OK)
+        if (atEngine_.send_command(atAT, defaultCommandTimeoutMs) != cellular::atEngine::atResult::OK)
         {
             LOG_DBG("GSM not responding, PWR Key pulse");
             pwr_key_pulse();
@@ -34,34 +34,34 @@ namespace cellular
         }
 
         
-         atEngine_.send_command(atATE0, 1000);
+         atEngine_.send_command(atATE0, defaultCommandTimeoutMs);
 
-        send_with_retry(atSetATCREG, ipCommandRetries, 1000);
-        send_with_retry(atSetATCOPS, ipCommandRetries, 1000);
-        send_with_retry(atSetATCOPSFmt, ipCommandRetries, 1000);
-        send_with_retry(atSetATCGATT, ipCommandRetries, 1000);
+        send_with_retry(atSetATCREG, ipCommandRetries, defaultCommandTimeoutMs);
+        send_with_retry(atSetATCOPS, ipCommandRetries, defaultCommandTimeoutMs);
+        send_with_retry(atSetATCOPSFmt, ipCommandRetries, defaultCommandTimeoutMs);
+        send_with_retry(atSetATCGATT, ipCommandRetries, defaultCommandTimeoutMs);
 
         std::array<char, 64> cmd{};
         int len = std::snprintf(cmd.data(),
                                 cmd.size(),
                                 atSetATCGDCONT,
                                 pdpContext);
-        send_with_retry(std::string_view{cmd.data(), len}, ipCommandRetries, 1000);
+        send_with_retry(std::string_view{cmd.data(), len}, ipCommandRetries, defaultCommandTimeoutMs);
 
         int len1 = std::snprintf(cmd.data(),
                                  cmd.size(),
                                  atSetATCNCFG,
                                  pdpContext);
-        send_with_retry(std::string_view{cmd.data(), len1}, ipCommandRetries, 1000);
+        send_with_retry(std::string_view{cmd.data(), len1}, ipCommandRetries, defaultCommandTimeoutMs);
 
-        send_with_retry(atSetATCNMP, ipCommandRetries, 1000);
-        send_with_retry(atSetATCMNB, ipCommandRetries, 1000);
-        send_with_retry(atSetATCNACT, ipCommandRetries, 1000);
+        send_with_retry(atSetATCNMP, ipCommandRetries, defaultCommandTimeoutMs);
+        send_with_retry(atSetATCMNB, ipCommandRetries, defaultCommandTimeoutMs);
+        send_with_retry(atSetATCNACT, ipCommandRetries, defaultCommandTimeoutMs);
 
         // SMS: text mode, and read/write/store all on SIM storage
-        send_with_retry(atSetATCMGF, ipCommandRetries, 1000);
-        send_with_retry(atSetATCSMS, ipCommandRetries, 1000);
-        send_with_retry(atSetATCPMS, ipCommandRetries, 1000);
+        send_with_retry(atSetATCMGF, ipCommandRetries, defaultCommandTimeoutMs);
+        send_with_retry(atSetATCSMS, ipCommandRetries, defaultCommandTimeoutMs);
+        send_with_retry(atSetATCPMS, ipCommandRetries, defaultCommandTimeoutMs);
 
         return 0;
     }
@@ -116,7 +116,7 @@ namespace cellular
             atGetATCSQ,
             prefix,
             std::span<uint8_t>(data_.data(), data_.size()),
-            1000);
+            defaultCommandTimeoutMs);
 
         if (atResponse_.result != cellular::atEngine::atResult::OK)
         {
@@ -206,7 +206,7 @@ namespace cellular
             atGetATCREG,
             prefix,
             std::span<uint8_t>(data_.data(), data_.size()),
-            1000);
+            defaultCommandTimeoutMs);
 
         if (atResponse_.result != cellular::atEngine::atResult::OK)
         {
@@ -300,7 +300,7 @@ namespace cellular
             atGetATCPIN,
             prefix,
             std::span<uint8_t>(data_.data(), data_.size()),
-            1000);
+            defaultCommandTimeoutMs);
 
         if (atResponse_.result != cellular::atEngine::atResult::OK)
         {
@@ -367,7 +367,7 @@ namespace cellular
             atGetATCNACT,
             prefix,
             std::span<uint8_t>(data_.data(), data_.size()),
-            1000);
+            defaultCommandTimeoutMs);
 
         if (atResponse_.result != cellular::atEngine::atResult::OK)
         {
@@ -464,8 +464,8 @@ namespace cellular
                                 cmd.size(),
                                 atSetATCNCFG,
                                 pdpContext);
-        send_with_retry(std::string_view{cmd.data(), len}, ipCommandRetries, 1000);
-        send_with_retry(atSetATCNACT, ipCommandRetries, 1000);
+        send_with_retry(std::string_view{cmd.data(), len}, ipCommandRetries, defaultCommandTimeoutMs);
+        send_with_retry(atSetATCNACT, ipCommandRetries, defaultCommandTimeoutMs);
     }
 
     void sim7080::get_carrier()
@@ -477,7 +477,7 @@ namespace cellular
             atGetATCOPS,
             prefix,
             std::span<uint8_t>(data_.data(), data_.size()),
-            1000);
+            defaultCommandTimeoutMs);
 
         if (atResponse_.result != cellular::atEngine::atResult::OK)
         {
@@ -531,7 +531,7 @@ namespace cellular
             atGetATCGSN,
             prefix,
             std::span<uint8_t>(data_.data(), data_.size()),
-            1000);
+            defaultCommandTimeoutMs);
 
         if (atResponse_.result != cellular::atEngine::atResult::OK)
         {
@@ -562,7 +562,7 @@ namespace cellular
             atGetATCCID,
             prefix,
             std::span<uint8_t>(data_.data(), data_.size()),
-            1000);
+            defaultCommandTimeoutMs);
 
         if (atResponse_.result != cellular::atEngine::atResult::OK)
         {
@@ -595,7 +595,7 @@ namespace cellular
             atGetATCNACT,
             prefix,
             std::span<uint8_t>(data_.data(), data_.size()),
-            1000);
+            defaultCommandTimeoutMs);
 
         if (atResponse_.result != cellular::atEngine::atResult::OK)
         {
@@ -668,7 +668,7 @@ namespace cellular
                 atGetATCLBS,
                 prefixLoc,
                 std::span<uint8_t>(data_.data(), data_.size()),
-                1000);
+                locationCommandTimeoutMs);
 
             if (atResponse_.result != cellular::atEngine::atResult::OK)
             {
@@ -800,7 +800,7 @@ namespace cellular
             atGetATCMGLAll,
             prefix,
             std::span<uint8_t>(data_.data(), data_.size()),
-            5000);
+            defaultCommandTimeoutMs);
 
         if (atResponse_.result != cellular::atEngine::atResult::OK ||
             atResponse_.responseLength == 0)
@@ -874,7 +874,7 @@ namespace cellular
         // Delete this message so the next queued one surfaces
         std::array<char, 32> cmd{};
         int len = std::snprintf(cmd.data(), cmd.size(), atSetATCMGD, index);
-        send_with_retry(std::string_view{cmd.data(), len}, ipCommandRetries, 5000);
+        send_with_retry(std::string_view{cmd.data(), len}, ipCommandRetries, defaultCommandTimeoutMs);
 
         return true;
     }
@@ -898,7 +898,7 @@ namespace cellular
                                 number.data());
 
         cellular::atEngine::atResult result = atEngine_.send_prompt_command(
-            std::string_view{cmd.data(), len}, body, 60000);
+            std::string_view{cmd.data(), len}, body, smsSubmitTimeoutMs);
 
         if (result != cellular::atEngine::atResult::OK)
         {
@@ -953,7 +953,7 @@ namespace cellular
                                     static_cast<int>(total));
 
             cellular::atEngine::atResult result = atEngine_.send_prompt_command(
-                std::string_view{cmd.data(), len}, chunk, 60000);
+                std::string_view{cmd.data(), len}, chunk, smsSubmitTimeoutMs);
 
             if (result != cellular::atEngine::atResult::OK)
             {
