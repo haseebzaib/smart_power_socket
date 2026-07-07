@@ -8,7 +8,22 @@ namespace device_status
 {
     static constexpr int32_t utilityVoltagePresentThresholdMv = 50000;
     static constexpr int32_t outletLoadPresentThresholdMa = 5;
+    static constexpr int32_t outletLoadPresentThresholdMw = 500;
+    static constexpr int32_t frequencyLowBadCentihz = 5800;
+    static constexpr int32_t frequencyHighBadCentihz = 6100;
+    static constexpr int32_t powerFactorBadCenti = 80;
+    static constexpr int32_t powerFactorRestoredCenti = 85;
     static constexpr int64_t millisecondsPerDay = 24LL * 60LL * 60LL * 1000LL;
+
+    int32_t abs_i32(int32_t value)
+    {
+        if (value >= 0)
+        {
+            return value;
+        }
+
+        return static_cast<int32_t>(-static_cast<int64_t>(value));
+    }
 
     bool utility_on(std::span<const sensors::hlw811x::measurements, outletCount> measurements)
     {
@@ -30,7 +45,50 @@ namespace device_status
 
     bool outlet_load_connected(const sensors::hlw811x::measurements &measurement)
     {
-        return measurement.mA >= outletLoadPresentThresholdMa;
+        return abs_i32(measurement.mA) >= outletLoadPresentThresholdMa ||
+               abs_i32(measurement.apparentmW) >= outletLoadPresentThresholdMw;
+    }
+
+    bool average_frequency_centihz(std::span<const sensors::hlw811x::measurements, outletCount> measurements,
+                                   int32_t &frequencyCentihz)
+    {
+        int64_t total = 0;
+        uint32_t count = 0;
+
+        for (const sensors::hlw811x::measurements &measurement : measurements)
+        {
+            if (measurement.mV >= utilityVoltagePresentThresholdMv && measurement.hZ > 0)
+            {
+                total += measurement.hZ;
+                count++;
+            }
+        }
+
+        if (count == 0)
+        {
+            return false;
+        }
+
+        frequencyCentihz = static_cast<int32_t>(total / count);
+        return true;
+    }
+
+    bool frequency_bad(int32_t frequencyCentihz)
+    {
+        return frequencyCentihz < frequencyLowBadCentihz ||
+               frequencyCentihz > frequencyHighBadCentihz;
+    }
+
+    bool power_factor_bad(const sensors::hlw811x::measurements &measurement)
+    {
+        return outlet_load_connected(measurement) &&
+               abs_i32(measurement.pF) < powerFactorBadCenti;
+    }
+
+    bool power_factor_restored(const sensors::hlw811x::measurements &measurement)
+    {
+        return !outlet_load_connected(measurement) ||
+               abs_i32(measurement.pF) >= powerFactorRestoredCenti;
     }
 
     uint32_t uptime_days_milli(int64_t bootTimeMs)
@@ -121,6 +179,49 @@ namespace device_status
                              upDays);
     }
 
+    int format_alert_message(const snapshot &status,
+                             std::string_view alert,
+                             char *buffer,
+                             std::size_t bufferSize)
+    {
+        char heartBeatDays[16]{};
+
+        format_milli(heartBeatDays, sizeof(heartBeatDays), status.heartBeatDaysMilli);
+        const uint32_t batteryCentivolts = (status.batteryMillivolts + 5U) / 10U;
+
+        return std::snprintf(buffer,
+                             bufferSize,
+                             "Alert=%.*s\n"
+                             "Utility=%s\n"
+                             "Device=%d%d%d%d\n"
+                             "Outlet=%d%d%d%d\n"
+                             "RSL=%d\n"
+                             "Batt=%u.%02u\n"
+                             "Lat=%s\n"
+                             "Lon=%s\n"
+                             "FW=%.*s\n"
+                             "HBD=%s",
+                             static_cast<int>(alert.size()),
+                             alert.data(),
+                             status.utilityOn ? "ON" : "OFF",
+                             status.outletLoadConnected[0] ? 1 : 0,
+                             status.outletLoadConnected[1] ? 1 : 0,
+                             status.outletLoadConnected[2] ? 1 : 0,
+                             status.outletLoadConnected[3] ? 1 : 0,
+                             status.outletOn[0] ? 1 : 0,
+                             status.outletOn[1] ? 1 : 0,
+                             status.outletOn[2] ? 1 : 0,
+                             status.outletOn[3] ? 1 : 0,
+                             status.rssiDbm,
+                             static_cast<unsigned int>(batteryCentivolts / 100U),
+                             static_cast<unsigned int>(batteryCentivolts % 100U),
+                             status.latitude,
+                             status.longitude,
+                             static_cast<int>(firmwareVersion.size()),
+                             firmwareVersion.data(),
+                             heartBeatDays);
+    }
+
     int format_signed_milli(char *buffer, std::size_t bufferSize, int32_t valueMilli)
     {
         const bool negative = valueMilli < 0;
@@ -134,6 +235,21 @@ namespace device_status
                              negative ? "-" : "",
                              static_cast<unsigned int>(magnitude / 1000U),
                              static_cast<unsigned int>(magnitude % 1000U));
+    }
+
+    int format_signed_centi(char *buffer, std::size_t bufferSize, int32_t valueCenti)
+    {
+        const bool negative = valueCenti < 0;
+        const uint32_t magnitude = negative
+                                       ? static_cast<uint32_t>(-static_cast<int64_t>(valueCenti))
+                                       : static_cast<uint32_t>(valueCenti);
+
+        return std::snprintf(buffer,
+                             bufferSize,
+                             "%s%u.%02u",
+                             negative ? "-" : "",
+                             static_cast<unsigned int>(magnitude / 100U),
+                             static_cast<unsigned int>(magnitude % 100U));
     }
 
     int format_outlet_report(const snapshot &status, char *buffer, std::size_t bufferSize)
@@ -172,6 +288,85 @@ namespace device_status
                              voltage[3],
                              current[3],
                              power[3]);
+    }
+
+    int format_single_outlet_report(const snapshot &status,
+                                    std::size_t outletIndex,
+                                    char *buffer,
+                                    std::size_t bufferSize)
+    {
+        if (outletIndex >= outletCount)
+        {
+            return -1;
+        }
+
+        char voltage[16]{};
+        char current[16]{};
+        char power[16]{};
+
+        format_signed_milli(voltage, sizeof(voltage), status.outletMeasurements[outletIndex].mV);
+        format_signed_milli(current, sizeof(current), status.outletMeasurements[outletIndex].mA);
+        format_signed_milli(power, sizeof(power), status.outletMeasurements[outletIndex].mW);
+
+        return std::snprintf(buffer,
+                             bufferSize,
+                             "Outlet=%u\n"
+                             "%u=%sV,%sA,%sW",
+                             static_cast<unsigned int>(outletIndex + 1U),
+                             static_cast<unsigned int>(outletIndex + 1U),
+                             voltage,
+                             current,
+                             power);
+    }
+
+    int format_frequency_alert(std::string_view alert,
+                               int32_t frequencyCentihz,
+                               char *buffer,
+                               std::size_t bufferSize)
+    {
+        char frequency[16]{};
+        format_signed_centi(frequency, sizeof(frequency), frequencyCentihz);
+
+        return std::snprintf(buffer,
+                             bufferSize,
+                             "Alert=%.*s\n"
+                             "Freq=%sHz",
+                             static_cast<int>(alert.size()),
+                             alert.data(),
+                             frequency);
+    }
+
+    int format_power_factor_alert(const snapshot &status,
+                                  std::string_view alert,
+                                  std::size_t outletIndex,
+                                  char *buffer,
+                                  std::size_t bufferSize)
+    {
+        if (outletIndex >= outletCount)
+        {
+            return -1;
+        }
+
+        char pf[16]{};
+        char outlet[96]{};
+
+        format_signed_centi(pf, sizeof(pf), status.outletMeasurements[outletIndex].pF);
+        int outletLen = format_single_outlet_report(status, outletIndex, outlet, sizeof(outlet));
+        if (outletLen <= 0 || static_cast<std::size_t>(outletLen) >= sizeof(outlet))
+        {
+            return -1;
+        }
+
+        return std::snprintf(buffer,
+                             bufferSize,
+                             "Alert=%.*s\n"
+                             "PF=%s\n"
+                             "%.*s",
+                             static_cast<int>(alert.size()),
+                             alert.data(),
+                             pf,
+                             outletLen,
+                             outlet);
     }
 
 }

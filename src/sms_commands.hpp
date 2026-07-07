@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
 #include <span>
 #include <string_view>
 
@@ -25,5 +26,21 @@ namespace sms_commands
 
     void handle(const context &ctx);
     bool send_status(const context &ctx, std::string_view recipient, std::string_view heading = {});
+    bool send_alert(const context &ctx,
+                    std::string_view recipient,
+                    std::string_view alert,
+                    bool includeOutletReport);
+    bool send_device_alert(const context &ctx,
+                           std::string_view recipient,
+                           std::string_view alert,
+                           std::size_t outletIndex);
+    bool send_frequency_alert(const context &ctx,
+                              std::string_view recipient,
+                              std::string_view alert,
+                              int32_t frequencyCentihz);
+    bool send_power_factor_alert(const context &ctx,
+                                 std::string_view recipient,
+                                 std::string_view alert,
+                                 std::size_t outletIndex);
 
 }

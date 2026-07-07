@@ -22,6 +22,7 @@
 #include "cellular/at_engine.hpp"
 #include "cellular/sim7080.hpp"
 #include "sms_commands.hpp"
+#include "alerts.hpp"
 
 LOG_MODULE_REGISTER(mainCpp, LOG_LEVEL_INF);
 
@@ -68,6 +69,10 @@ std::array<hardware::gpioCon *, device_status::outletCount> outletRelays = {{
 std::string_view alert_number = "1234567890";
 uint32_t heartBeatDaysMilli = 0;
 uint32_t batteryMillivolts = 0;
+alerts::utilityPowerMonitor utilityPowerAlerts;
+alerts::devicePowerMonitor devicePowerAlerts;
+alerts::frequencyMonitor frequencyAlerts;
+alerts::powerFactorMonitor powerFactorAlerts;
 
 bool sms_network_ready(const cellular::sim7080::modemInformation &modemInfo)
 {
@@ -175,6 +180,14 @@ int main(void)
 		if (!startupStatusSent && sms_network_ready(sim7080Information))
 		{
 			startupStatusSent = sms_commands::send_status(smsContext, alert_number, "SPS is starting");
+		}
+
+		if (sms_network_ready(sim7080Information))
+		{
+			utilityPowerAlerts.process(smsContext, alert_number);
+			devicePowerAlerts.process(smsContext, alert_number);
+			frequencyAlerts.process(smsContext, alert_number);
+			powerFactorAlerts.process(smsContext, alert_number);
 		}
 
 		if (sim7080Information.smsReceived)
