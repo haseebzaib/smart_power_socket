@@ -84,7 +84,8 @@ int main(void)
 	relay2.init();
 	relay3.init();
 	relay4.init();
-	batteryAdc.init();
+	int batteryAdcInitRet = batteryAdc.init();
+	LOG_INF("Battery ADC init ret: %d", batteryAdcInitRet);
 
 	energyMeters.init();
 

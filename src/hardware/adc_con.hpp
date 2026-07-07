@@ -39,6 +39,7 @@ namespace hardware
         uint32_t dividerTopOhms_;
         uint32_t dividerBottomOhms_;
         int16_t sample_;
+        bool initialized_;
     };
 
 }
