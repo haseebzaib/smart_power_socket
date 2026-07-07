@@ -48,7 +48,8 @@ namespace device_status
                            std::span<hardware::gpioCon *, outletCount> relays,
                            std::span<const sensors::hlw811x::measurements, outletCount> measurements,
                            int64_t bootTimeMs,
-                           uint32_t heartBeatDaysMilli)
+                           uint32_t heartBeatDaysMilli,
+                           uint16_t batteryCentivolts)
     {
         snapshot status{};
 
@@ -58,7 +59,7 @@ namespace device_status
         status.longitude = modemInformation.longitude.data();
         status.upDaysMilli = uptime_days_milli(bootTimeMs);
         status.heartBeatDaysMilli = heartBeatDaysMilli;
-        status.batteryCentivolts = 0;
+        status.batteryCentivolts = batteryCentivolts;
 
         for (std::size_t i = 0; i < outletCount; ++i)
         {

@@ -38,7 +38,8 @@ namespace device_status
                            std::span<hardware::gpioCon *, outletCount> relays,
                            std::span<const sensors::hlw811x::measurements, outletCount> measurements,
                            int64_t bootTimeMs,
-                           uint32_t heartBeatDaysMilli);
+                           uint32_t heartBeatDaysMilli,
+                           uint16_t batteryCentivolts);
 
     int format_status_message(const snapshot &status, char *buffer, std::size_t bufferSize);
     int format_outlet_report(const snapshot &status, char *buffer, std::size_t bufferSize);

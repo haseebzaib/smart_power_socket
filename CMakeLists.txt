@@ -11,6 +11,7 @@ target_sources(app PRIVATE
 	src/device_status.cpp
 	src/hardware/gpio_con.cpp
 	src/hardware/uart_con.cpp
+	src/hardware/adc_con.cpp
 	src/sensors/hlw811x.cpp
 	src/sensors/externalLibs/hlw811x/hlw811x.c
 	src/cellular/at_engine.cpp

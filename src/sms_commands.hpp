@@ -20,6 +20,7 @@ namespace sms_commands
         std::span<const sensors::hlw811x::measurements, device_status::outletCount> measurements;
         int64_t bootTimeMs;
         uint32_t &heartBeatDaysMilli;
+        uint16_t batteryCentivolts;
     };
 
     void handle(const context &ctx);

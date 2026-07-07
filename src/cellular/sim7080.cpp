@@ -22,18 +22,14 @@ namespace cellular
 
         LOG_INF("GSM Init Started");
 
-        pwr_key_pulse();
-        k_msleep(25000);
-        send_with_retry(atAT, 10, defaultCommandTimeoutMs);
-        atEngine_.processRx();
-        if (atEngine_.send_command(atAT, defaultCommandTimeoutMs) != cellular::atEngine::atResult::OK)
+        if (send_with_retry(atAT, 3, defaultCommandTimeoutMs) != atEngine::atResult::OK)
         {
-            atEngine_.processRx();
-            LOG_DBG("GSM not responding, PWR Key pulse");
             pwr_key_pulse();
             k_msleep(25000);
-            atEngine_.processRx();
+            send_with_retry(atAT, 20, defaultCommandTimeoutMs);
         }
+
+        send_with_retry(atATE0, 5, defaultCommandTimeoutMs);
 
         // atEngine_.send_command(atATE0, defaultCommandTimeoutMs);
         send_with_retry(atAT, 10, defaultCommandTimeoutMs);

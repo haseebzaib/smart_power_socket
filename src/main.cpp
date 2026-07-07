@@ -17,6 +17,7 @@
 
 #include "hardware/gpio_con.hpp"
 #include "hardware/uart_con.hpp"
+#include "hardware/adc_con.hpp"
 #include "sensors/hlw811x.hpp"
 #include "cellular/at_engine.hpp"
 #include "cellular/sim7080.hpp"
@@ -30,6 +31,8 @@ hardware::gpioCon relay1(GPIO_DT_SPEC_GET(DT_ALIAS(relay1), gpios), GPIO_OUTPUT_
 hardware::gpioCon relay2(GPIO_DT_SPEC_GET(DT_ALIAS(relay2), gpios), GPIO_OUTPUT_INACTIVE);
 hardware::gpioCon relay3(GPIO_DT_SPEC_GET(DT_ALIAS(relay3), gpios), GPIO_OUTPUT_INACTIVE);
 hardware::gpioCon relay4(GPIO_DT_SPEC_GET(DT_ALIAS(relay4), gpios), GPIO_OUTPUT_INACTIVE);
+
+hardware::adcCon batteryAdc(HARDWARE_ADC_CHANNEL_DT_SPEC_GET(DT_ALIAS(batt_volt_adc)), 110000, 110000);
 
 cellular::sim7080 modemSim7080(DEVICE_DT_GET(DT_ALIAS(gsm_uart)),
 							   GPIO_DT_SPEC_GET(DT_ALIAS(gsm_pwrkey), gpios), GPIO_OUTPUT_INACTIVE);
@@ -64,6 +67,7 @@ std::array<hardware::gpioCon *, device_status::outletCount> outletRelays = {{
 
 std::string_view alert_number = "1234567890";
 uint32_t heartBeatDaysMilli = 0;
+uint16_t batteryCentivolts = 0;
 
 bool sms_network_ready(const cellular::sim7080::modemInformation &modemInfo)
 {
@@ -80,6 +84,7 @@ int main(void)
 	relay2.init();
 	relay3.init();
 	relay4.init();
+	batteryAdc.init();
 
 	energyMeters.init();
 
@@ -128,6 +133,18 @@ int main(void)
 			k_msleep(300);
 		}
 
+		int32_t batteryMillivolts = 0;
+		int batteryRet = batteryAdc.read_divider_millivolts(batteryMillivolts);
+		if (batteryRet == 0 && batteryMillivolts >= 0)
+		{
+			batteryCentivolts = static_cast<uint16_t>((batteryMillivolts + 5) / 10);
+		}
+		else
+		{
+			LOG_ERR("Battery ADC read failed: %d", batteryRet);
+		}
+		LOG_INF("battery mV %d", batteryMillivolts);
+
 		modemSim7080.loop(sim7080Information);
 
 		LOG_INF("#########Sim7080Information#########");
@@ -151,6 +168,7 @@ int main(void)
 			.measurements = std::span<const sensors::hlw811x::measurements, device_status::outletCount>{acMeasurements},
 			.bootTimeMs = bootTimeMs,
 			.heartBeatDaysMilli = heartBeatDaysMilli,
+			.batteryCentivolts = batteryCentivolts,
 		};
 
 		if (!startupStatusSent && sms_network_ready(sim7080Information))

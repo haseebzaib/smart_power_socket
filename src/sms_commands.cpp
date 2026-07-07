@@ -108,7 +108,8 @@ namespace sms_commands
                                                                        ctx.relays,
                                                                        ctx.measurements,
                                                                        ctx.bootTimeMs,
-                                                                       ctx.heartBeatDaysMilli);
+                                                                       ctx.heartBeatDaysMilli,
+                                                                       ctx.batteryCentivolts);
 
         std::array<char, 192> statusText{};
         int statusLen = device_status::format_status_message(status, statusText.data(), statusText.size());
