@@ -5,7 +5,6 @@
  */
 
 #include <array>
-#include <cstring>
 #include <iostream>
 #include <span>
 #include <string_view>
@@ -23,6 +22,7 @@
 #include "cellular/sim7080.hpp"
 #include "sms_commands.hpp"
 #include "alerts.hpp"
+#include "app_config.hpp"
 
 LOG_MODULE_REGISTER(mainCpp, LOG_LEVEL_INF);
 
@@ -48,12 +48,6 @@ const hlw811x_pga baselinePga = {
 	.A = HLW811X_PGA_GAIN_16,
 	.B = HLW811X_PGA_GAIN_1,
 	.U = HLW811X_PGA_GAIN_1,
-};
-
-const hlw811x_resistor_ratio baselineRatio = {
-	.K1_A = 3.0f,
-	.K1_B = 1.0f,
-	.K2 = 1.064f,
 };
 
 std::array<int, 4> energyMeterErr;
@@ -82,6 +76,8 @@ bool sms_network_ready(const cellular::sim7080::modemInformation &modemInfo)
 int main(void)
 {
 	const int64_t bootTimeMs = k_uptime_get();
+	const int appConfigRet = app_config::init();
+	LOG_INF("App config init ret: %d", appConfigRet);
 
 	utilityPwrLed.init();
 	cellularLed.init();
@@ -96,13 +92,15 @@ int main(void)
 
 	for (uint8_t meter = 1; meter <= 4; ++meter)
 	{
-		energyMeterErr[meter - 1] = energyMeters.configureIndividual(meter, baselineRatio, baselinePga);
+		const hlw811x_resistor_ratio ratio = app_config::ratio_for_outlet(meter - 1);
+		energyMeterErr[meter - 1] = energyMeters.configureIndividual(meter, ratio, baselinePga);
 	}
 
-	relay1.set(0);
-	relay2.set(0);
-	relay3.set(0);
-	relay4.set(0);
+	const uint8_t startupRelayMask = app_config::relay_state_valid() ? app_config::relay_on_mask() : 0x0f;
+	for (std::size_t i = 0; i < outletRelays.size(); ++i)
+	{
+		outletRelays[i]->set((startupRelayMask & (1U << i)) != 0U ? 0 : 1);
+	}
 
 	// k_msleep(5000);
 
@@ -118,7 +116,8 @@ int main(void)
 		{
 			if (energyMeterErr[meter - 1] != 0)
 			{
-				energyMeters.configureIndividual(meter, baselineRatio, baselinePga);
+				const hlw811x_resistor_ratio ratio = app_config::ratio_for_outlet(meter - 1);
+				energyMeterErr[meter - 1] = energyMeters.configureIndividual(meter, ratio, baselinePga);
 			}
 			else
 			{
@@ -170,6 +169,8 @@ int main(void)
 		sms_commands::context smsContext{
 			.modem = modemSim7080,
 			.modemInformation = sim7080Information,
+			.energyMeters = &energyMeters,
+			.meterPga = &baselinePga,
 			.relays = std::span<hardware::gpioCon *, device_status::outletCount>{outletRelays},
 			.measurements = std::span<const sensors::hlw811x::measurements, device_status::outletCount>{acMeasurements},
 			.bootTimeMs = bootTimeMs,

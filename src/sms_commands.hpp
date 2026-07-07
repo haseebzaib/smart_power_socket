@@ -17,6 +17,8 @@ namespace sms_commands
     {
         cellular::sim7080 &modem;
         const cellular::sim7080::modemInformation &modemInformation;
+        sensors::hlw811x *energyMeters;
+        const hlw811x_pga *meterPga;
         std::span<hardware::gpioCon *, device_status::outletCount> relays;
         std::span<const sensors::hlw811x::measurements, device_status::outletCount> measurements;
         int64_t bootTimeMs;

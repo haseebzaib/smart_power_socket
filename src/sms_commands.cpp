@@ -8,6 +8,8 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
+#include "app_config.hpp"
+
 LOG_MODULE_REGISTER(sms_commands, LOG_LEVEL_INF);
 
 namespace sms_commands
@@ -43,8 +45,11 @@ namespace sms_commands
     void handle_get_outlet_data(const context &ctx,
                                 std::string_view sender,
                                 std::string_view body);
+    void handle_run_calibration(const context &ctx,
+                                std::string_view sender,
+                                std::string_view body);
 
-    constexpr std::array<commandDefinition, 8> commands = {{
+    constexpr std::array<commandDefinition, 10> commands = {{
         {"getStatus", handle_get_status},
         {"SetHeartBeatDays", handle_set_heart_beat_days},
         {"DeviceOn", handle_device_on},
@@ -53,6 +58,8 @@ namespace sms_commands
         {"Reboot", handle_reboot},
         {"GetOutletData", handle_get_outlet_data},
         {"OutletData", handle_get_outlet_data},
+        {"RunCalibration", handle_run_calibration},
+        {"CalibrateOutlet", handle_run_calibration},
     }};
 
     constexpr uint32_t relayRebootDelayMs = 1000;
@@ -121,6 +128,12 @@ namespace sms_commands
         }
 
         return trim(body.substr(equal + 1));
+    }
+
+    std::string_view command_tail(std::string_view body)
+    {
+        body = trim(body);
+        return trim(body.substr(command_token(body).size()));
     }
 
     bool parse_outlet_mask(std::string_view body, std::array<bool, device_status::outletCount> &mask)
@@ -197,6 +210,156 @@ namespace sms_commands
         return true;
     }
 
+    bool parse_calibration_target(std::string_view body,
+                                  bool &hasTarget,
+                                  bool &allOutlets,
+                                  std::size_t &outletIndex)
+    {
+        std::string_view args = command_tail(body);
+        if (!args.empty() && args.front() == '=')
+        {
+            args.remove_prefix(1);
+            args = trim(args);
+        }
+
+        if (args.empty())
+        {
+            hasTarget = false;
+            allOutlets = false;
+            return true;
+        }
+
+        const std::size_t tokenEnd = args.find_first_of(" ,;\t\r\n");
+        const std::string_view token = tokenEnd == std::string_view::npos ? args : args.substr(0, tokenEnd);
+
+        hasTarget = true;
+        if (ascii_equals_ignore_case(token, "all"))
+        {
+            allOutlets = true;
+            return true;
+        }
+
+        if (token.size() == 1 && token.front() >= '1' && token.front() <= '4')
+        {
+            allOutlets = false;
+            outletIndex = static_cast<std::size_t>(token.front() - '1');
+            return true;
+        }
+
+        return false;
+    }
+
+    bool get_named_arg(std::string_view body, std::string_view key, std::string_view &value)
+    {
+        std::string_view args = command_tail(body);
+
+        while (!args.empty())
+        {
+            args = trim(args);
+            while (!args.empty() && (args.front() == ',' || args.front() == ';'))
+            {
+                args.remove_prefix(1);
+                args = trim(args);
+            }
+
+            const std::size_t tokenEnd = args.find_first_of(" ,;\t\r\n");
+            std::string_view token = tokenEnd == std::string_view::npos ? args : args.substr(0, tokenEnd);
+            const std::size_t equal = token.find('=');
+
+            if (equal != std::string_view::npos &&
+                ascii_equals_ignore_case(token.substr(0, equal), key))
+            {
+                value = token.substr(equal + 1);
+                return !value.empty();
+            }
+
+            if (tokenEnd == std::string_view::npos)
+            {
+                break;
+            }
+
+            args.remove_prefix(tokenEnd + 1);
+        }
+
+        return false;
+    }
+
+    bool parse_unsigned_decimal_scaled(std::string_view text,
+                                       uint32_t scale,
+                                       uint32_t minValue,
+                                       uint32_t maxValue,
+                                       uint32_t &value)
+    {
+        text = trim(text);
+        if (text.empty())
+        {
+            return false;
+        }
+
+        uint64_t whole = 0;
+        uint64_t fraction = 0;
+        uint32_t fractionScale = scale;
+        bool seenDigit = false;
+        bool inFraction = false;
+
+        for (char ch : text)
+        {
+            if (ch == '.')
+            {
+                if (inFraction)
+                {
+                    return false;
+                }
+
+                inFraction = true;
+                continue;
+            }
+
+            if (ch < '0' || ch > '9')
+            {
+                return false;
+            }
+
+            seenDigit = true;
+            const uint32_t digit = static_cast<uint32_t>(ch - '0');
+            if (!inFraction)
+            {
+                whole = whole * 10U + digit;
+                continue;
+            }
+
+            if (fractionScale > 1U)
+            {
+                fractionScale /= 10U;
+                fraction += static_cast<uint64_t>(digit) * fractionScale;
+            }
+        }
+
+        if (!seenDigit)
+        {
+            return false;
+        }
+
+        const uint64_t scaled = whole * scale + fraction;
+        if (scaled < minValue || scaled > maxValue)
+        {
+            return false;
+        }
+
+        value = static_cast<uint32_t>(scaled);
+        return true;
+    }
+
+    int32_t abs_i32(int32_t value)
+    {
+        if (value >= 0)
+        {
+            return value;
+        }
+
+        return static_cast<int32_t>(-static_cast<int64_t>(value));
+    }
+
     void set_outlet_relay(const context &ctx, std::size_t outletIndex, bool on)
     {
         if (outletIndex >= ctx.relays.size() || ctx.relays[outletIndex] == nullptr)
@@ -205,6 +368,29 @@ namespace sms_commands
         }
 
         ctx.relays[outletIndex]->set(on ? 0 : 1);
+    }
+
+    uint8_t relay_on_mask(const context &ctx)
+    {
+        uint8_t mask = 0;
+        for (std::size_t i = 0; i < ctx.relays.size(); ++i)
+        {
+            if (ctx.relays[i] != nullptr && device_status::outlet_on(*ctx.relays[i]))
+            {
+                mask |= static_cast<uint8_t>(1U << i);
+            }
+        }
+
+        return mask;
+    }
+
+    void save_relay_state(const context &ctx)
+    {
+        const int ret = app_config::save_relay_on_mask(relay_on_mask(ctx));
+        if (ret != 0)
+        {
+            LOG_ERR("relay state save failed: %d", ret);
+        }
     }
 
     bool outlet_relay_on(const context &ctx, std::size_t outletIndex)
@@ -430,6 +616,118 @@ namespace sms_commands
                                   std::string_view{outletText.data(), static_cast<std::size_t>(outletLen)});
     }
 
+    bool send_calibration_instructions(const context &ctx, std::string_view recipient)
+    {
+        constexpr std::string_view text =
+            "RunCalibration\n"
+            "Use: RunCalibration 1 V=120.000\n"
+            "Optional: F=60.00 P=60.000";
+
+        return ctx.modem.send_sms(recipient, text);
+    }
+
+    bool send_calibration_result(const context &ctx,
+                                 std::string_view recipient,
+                                 std::size_t outletIndex,
+                                 uint32_t referenceMv,
+                                 int32_t measuredMv,
+                                 int32_t k2Micro,
+                                 bool loadWarning)
+    {
+        std::array<char, 160> text{};
+        const uint32_t k2Magnitude = static_cast<uint32_t>(k2Micro);
+        const int len = std::snprintf(text.data(),
+                                      text.size(),
+                                      "Calibration=OK\n"
+                                      "Outlet=%u\n"
+                                      "Vref=%u.%03uV\n"
+                                      "Vmeas=%d.%03uV\n"
+                                      "K2=%u.%06u%s",
+                                      static_cast<unsigned int>(outletIndex + 1U),
+                                      static_cast<unsigned int>(referenceMv / 1000U),
+                                      static_cast<unsigned int>(referenceMv % 1000U),
+                                      static_cast<int>(measuredMv / 1000),
+                                      static_cast<unsigned int>(abs_i32(measuredMv % 1000)),
+                                      static_cast<unsigned int>(k2Magnitude / app_config::ratioScale),
+                                      static_cast<unsigned int>(k2Magnitude % app_config::ratioScale),
+                                      loadWarning ? "\nLoadCheck=WARN" : "");
+
+        if (len <= 0 || static_cast<std::size_t>(len) >= text.size())
+        {
+            return false;
+        }
+
+        return ctx.modem.send_sms(recipient, std::string_view{text.data(), static_cast<std::size_t>(len)});
+    }
+
+    bool run_calibration_for_outlet(const context &ctx,
+                                    std::string_view recipient,
+                                    std::size_t outletIndex,
+                                    uint32_t referenceMv,
+                                    uint32_t referenceCentihz,
+                                    bool hasReferenceFrequency,
+                                    uint32_t referenceMw,
+                                    bool hasReferencePower)
+    {
+        if (ctx.energyMeters == nullptr || ctx.meterPga == nullptr)
+        {
+            send_command_ack(ctx, recipient, "ERR RunCalibration no meter");
+            return false;
+        }
+
+        const sensors::hlw811x::measurements &measurement = ctx.measurements[outletIndex];
+        const int32_t measuredMv = abs_i32(measurement.mV);
+        if (measuredMv < 50000)
+        {
+            send_command_ack(ctx, recipient, "ERR RunCalibration low voltage");
+            return false;
+        }
+
+        if (hasReferenceFrequency &&
+            abs_i32(measurement.hZ - static_cast<int32_t>(referenceCentihz)) > 200)
+        {
+            send_command_ack(ctx, recipient, "ERR RunCalibration freq");
+            return false;
+        }
+
+        bool loadWarning = false;
+        if (hasReferencePower && referenceMw > 0U)
+        {
+            const uint32_t measuredMw = static_cast<uint32_t>(abs_i32(measurement.mW));
+            const uint32_t diff = measuredMw > referenceMw ? measuredMw - referenceMw : referenceMw - measuredMw;
+            loadWarning = diff > (referenceMw / 4U);
+        }
+
+        const int32_t oldK2Micro = app_config::k2_micro_for_outlet(outletIndex);
+        const int64_t scaledK2 = (static_cast<int64_t>(oldK2Micro) * measuredMv + referenceMv / 2) / referenceMv;
+        if (scaledK2 < 500000 || scaledK2 > 2000000)
+        {
+            send_command_ack(ctx, recipient, "ERR RunCalibration K2");
+            return false;
+        }
+
+        const int32_t newK2Micro = static_cast<int32_t>(scaledK2);
+        int ret = app_config::save_k2_micro(outletIndex, newK2Micro);
+        if (ret != 0)
+        {
+            send_command_ack(ctx, recipient, "ERR RunCalibration save");
+            return false;
+        }
+
+        const hlw811x_resistor_ratio ratio = app_config::ratio_for_outlet(outletIndex);
+        ret = ctx.energyMeters->configureIndividual(static_cast<uint8_t>(outletIndex + 1U),
+                                                    ratio,
+                                                    *ctx.meterPga);
+        if (ret != 0)
+        {
+            send_command_ack(ctx, recipient, "ERR RunCalibration apply");
+            return false;
+        }
+
+        send_calibration_result(ctx, recipient, outletIndex, referenceMv, measuredMv, newK2Micro, loadWarning);
+        return true;
+    }
+
     bool send_power_factor_alert(const context &ctx,
                                  std::string_view recipient,
                                  std::string_view alert,
@@ -492,6 +790,7 @@ namespace sms_commands
             }
         }
 
+        save_relay_state(ctx);
         send_command_ack(ctx, sender, "OK DeviceOn");
     }
 
@@ -514,6 +813,7 @@ namespace sms_commands
             }
         }
 
+        save_relay_state(ctx);
         send_command_ack(ctx, sender, "OK DeviceOff");
     }
 
@@ -538,6 +838,7 @@ namespace sms_commands
             reboot_outlet(ctx, i);
         }
 
+        save_relay_state(ctx);
         send_command_ack(ctx, sender, "OK DeviceReboot");
     }
 
@@ -553,6 +854,7 @@ namespace sms_commands
         }
 
         reboot_outlet(ctx, outletIndex);
+        save_relay_state(ctx);
         send_command_ack(ctx, sender, "OK Reboot");
     }
 
@@ -578,6 +880,92 @@ namespace sms_commands
         for (std::size_t i = 0; i < device_status::outletCount; ++i)
         {
             send_outlet_detail(ctx, sender, status, i);
+        }
+    }
+
+    void handle_run_calibration(const context &ctx,
+                                std::string_view sender,
+                                std::string_view body)
+    {
+        bool hasTarget = false;
+        bool allOutlets = false;
+        std::size_t outletIndex = 0;
+        if (!parse_calibration_target(body, hasTarget, allOutlets, outletIndex))
+        {
+            send_command_ack(ctx, sender, "ERR RunCalibration target");
+            return;
+        }
+
+        if (!hasTarget)
+        {
+            send_calibration_instructions(ctx, sender);
+            return;
+        }
+
+        if (allOutlets)
+        {
+            send_command_ack(ctx, sender, "ERR RunCalibration outlet");
+            return;
+        }
+
+        std::string_view valueText{};
+        uint32_t referenceMv = 0;
+        if (!get_named_arg(body, "V", valueText) ||
+            !parse_unsigned_decimal_scaled(valueText, 1000, 80000, 300000, referenceMv))
+        {
+            send_command_ack(ctx, sender, "ERR RunCalibration V");
+            return;
+        }
+
+        bool hasReferenceFrequency = false;
+        uint32_t referenceCentihz = 0;
+        if (get_named_arg(body, "F", valueText))
+        {
+            if (!parse_unsigned_decimal_scaled(valueText, 100, 4500, 7000, referenceCentihz))
+            {
+                send_command_ack(ctx, sender, "ERR RunCalibration F");
+                return;
+            }
+
+            hasReferenceFrequency = true;
+        }
+
+        bool hasReferencePower = false;
+        uint32_t referenceMw = 0;
+        if (get_named_arg(body, "P", valueText) || get_named_arg(body, "Load", valueText))
+        {
+            if (!parse_unsigned_decimal_scaled(valueText, 1000, 0, 20000000, referenceMw))
+            {
+                send_command_ack(ctx, sender, "ERR RunCalibration P");
+                return;
+            }
+
+            hasReferencePower = true;
+        }
+
+        if (!allOutlets)
+        {
+            run_calibration_for_outlet(ctx,
+                                       sender,
+                                       outletIndex,
+                                       referenceMv,
+                                       referenceCentihz,
+                                       hasReferenceFrequency,
+                                       referenceMw,
+                                       hasReferencePower);
+            return;
+        }
+
+        for (std::size_t i = 0; i < device_status::outletCount; ++i)
+        {
+            run_calibration_for_outlet(ctx,
+                                       sender,
+                                       i,
+                                       referenceMv,
+                                       referenceCentihz,
+                                       hasReferenceFrequency,
+                                       referenceMw,
+                                       hasReferencePower);
         }
     }
 

@@ -10,6 +10,7 @@ target_sources(app PRIVATE
 	src/alerts.cpp
 	src/sms_commands.cpp
 	src/device_status.cpp
+	src/app_config.cpp
 	src/hardware/gpio_con.cpp
 	src/hardware/uart_con.cpp
 	src/hardware/adc_con.cpp
