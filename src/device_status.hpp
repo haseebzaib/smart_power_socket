@@ -57,6 +57,10 @@ namespace device_status
                                     std::size_t outletIndex,
                                     char *buffer,
                                     std::size_t bufferSize);
+    int format_outlet_detail_report(const snapshot &status,
+                                    std::size_t outletIndex,
+                                    char *buffer,
+                                    std::size_t bufferSize);
     int format_frequency_alert(std::string_view alert,
                                int32_t frequencyCentihz,
                                char *buffer,

@@ -40,14 +40,19 @@ namespace sms_commands
     void handle_reboot(const context &ctx,
                        std::string_view sender,
                        std::string_view body);
+    void handle_get_outlet_data(const context &ctx,
+                                std::string_view sender,
+                                std::string_view body);
 
-    constexpr std::array<commandDefinition, 6> commands = {{
+    constexpr std::array<commandDefinition, 8> commands = {{
         {"getStatus", handle_get_status},
         {"SetHeartBeatDays", handle_set_heart_beat_days},
         {"DeviceOn", handle_device_on},
         {"DeviceOff", handle_device_off},
         {"DeviceReboot", handle_device_reboot},
         {"Reboot", handle_reboot},
+        {"GetOutletData", handle_get_outlet_data},
+        {"OutletData", handle_get_outlet_data},
     }};
 
     constexpr uint32_t relayRebootDelayMs = 1000;
@@ -160,6 +165,34 @@ namespace sms_commands
             return false;
         }
 
+        outletIndex = static_cast<std::size_t>(arg.front() - '1');
+        return true;
+    }
+
+    bool parse_optional_outlet_number(std::string_view body,
+                                      bool &allOutlets,
+                                      std::size_t &outletIndex)
+    {
+        body = trim(body);
+        std::string_view arg = trim(body.substr(command_token(body).size()));
+        if (!arg.empty() && arg.front() == '=')
+        {
+            arg.remove_prefix(1);
+            arg = trim(arg);
+        }
+
+        if (arg.empty() || ascii_equals_ignore_case(arg, "all"))
+        {
+            allOutlets = true;
+            return true;
+        }
+
+        if (arg.size() != 1 || arg.front() < '1' || arg.front() > '4')
+        {
+            return false;
+        }
+
+        allOutlets = false;
         outletIndex = static_cast<std::size_t>(arg.front() - '1');
         return true;
     }
@@ -377,6 +410,26 @@ namespace sms_commands
                                   std::string_view{alertText.data(), static_cast<std::size_t>(alertLen)});
     }
 
+    bool send_outlet_detail(const context &ctx,
+                            std::string_view recipient,
+                            const device_status::snapshot &status,
+                            std::size_t outletIndex)
+    {
+        std::array<char, 160> outletText{};
+        int outletLen = device_status::format_outlet_detail_report(status,
+                                                                   outletIndex,
+                                                                   outletText.data(),
+                                                                   outletText.size());
+        if (outletLen <= 0 || static_cast<std::size_t>(outletLen) >= outletText.size())
+        {
+            LOG_ERR("outlet detail formatting failed");
+            return false;
+        }
+
+        return ctx.modem.send_sms(recipient,
+                                  std::string_view{outletText.data(), static_cast<std::size_t>(outletLen)});
+    }
+
     bool send_power_factor_alert(const context &ctx,
                                  std::string_view recipient,
                                  std::string_view alert,
@@ -501,6 +554,31 @@ namespace sms_commands
 
         reboot_outlet(ctx, outletIndex);
         send_command_ack(ctx, sender, "OK Reboot");
+    }
+
+    void handle_get_outlet_data(const context &ctx,
+                                std::string_view sender,
+                                std::string_view body)
+    {
+        bool allOutlets = true;
+        std::size_t outletIndex = 0;
+        if (!parse_optional_outlet_number(body, allOutlets, outletIndex))
+        {
+            send_command_ack(ctx, sender, "ERR GetOutletData");
+            return;
+        }
+
+        device_status::snapshot status = make_status_snapshot(ctx);
+        if (!allOutlets)
+        {
+            send_outlet_detail(ctx, sender, status, outletIndex);
+            return;
+        }
+
+        for (std::size_t i = 0; i < device_status::outletCount; ++i)
+        {
+            send_outlet_detail(ctx, sender, status, i);
+        }
     }
 
     void handle(const context &ctx)

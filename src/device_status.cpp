@@ -319,6 +319,52 @@ namespace device_status
                              power);
     }
 
+    int format_outlet_detail_report(const snapshot &status,
+                                    std::size_t outletIndex,
+                                    char *buffer,
+                                    std::size_t bufferSize)
+    {
+        if (outletIndex >= outletCount)
+        {
+            return -1;
+        }
+
+        const sensors::hlw811x::measurements &measurement = status.outletMeasurements[outletIndex];
+
+        char voltage[16]{};
+        char current[16]{};
+        char activePower[16]{};
+        char apparentPower[16]{};
+        char frequency[16]{};
+        char powerFactor[16]{};
+
+        format_signed_milli(voltage, sizeof(voltage), measurement.mV);
+        format_signed_milli(current, sizeof(current), measurement.mA);
+        format_signed_milli(activePower, sizeof(activePower), measurement.mW);
+        format_signed_milli(apparentPower, sizeof(apparentPower), measurement.apparentmW);
+        format_signed_centi(frequency, sizeof(frequency), measurement.hZ);
+        format_signed_centi(powerFactor, sizeof(powerFactor), measurement.pF);
+
+        return std::snprintf(buffer,
+                             bufferSize,
+                             "OutletData=%u\n"
+                             "V=%sV\n"
+                             "I=%sA\n"
+                             "P=%sW\n"
+                             "S=%sVA\n"
+                             "E=%dWh\n"
+                             "F=%sHz\n"
+                             "PF=%s",
+                             static_cast<unsigned int>(outletIndex + 1U),
+                             voltage,
+                             current,
+                             activePower,
+                             apparentPower,
+                             static_cast<int>(measurement.wH),
+                             frequency,
+                             powerFactor);
+    }
+
     int format_frequency_alert(std::string_view alert,
                                int32_t frequencyCentihz,
                                char *buffer,
