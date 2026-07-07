@@ -67,7 +67,7 @@ std::array<hardware::gpioCon *, device_status::outletCount> outletRelays = {{
 
 std::string_view alert_number = "1234567890";
 uint32_t heartBeatDaysMilli = 0;
-uint16_t batteryCentivolts = 0;
+uint32_t batteryMillivolts = 0;
 
 bool sms_network_ready(const cellular::sim7080::modemInformation &modemInfo)
 {
@@ -134,17 +134,17 @@ int main(void)
 			k_msleep(300);
 		}
 
-		int32_t batteryMillivolts = 0;
-		int batteryRet = batteryAdc.read_divider_millivolts(batteryMillivolts);
-		if (batteryRet == 0 && batteryMillivolts >= 0)
+		int32_t batteryReadingMillivolts = 0;
+		int batteryRet = batteryAdc.read_divider_millivolts(batteryReadingMillivolts);
+		if (batteryRet == 0 && batteryReadingMillivolts >= 0)
 		{
-			batteryCentivolts = static_cast<uint16_t>((batteryMillivolts + 5) / 10);
+			batteryMillivolts = static_cast<uint32_t>(batteryReadingMillivolts);
 		}
 		else
 		{
 			LOG_ERR("Battery ADC read failed: %d", batteryRet);
 		}
-		LOG_INF("battery mV %d", batteryMillivolts);
+		LOG_INF("battery mV %u", static_cast<unsigned int>(batteryMillivolts));
 
 		modemSim7080.loop(sim7080Information);
 
@@ -169,7 +169,7 @@ int main(void)
 			.measurements = std::span<const sensors::hlw811x::measurements, device_status::outletCount>{acMeasurements},
 			.bootTimeMs = bootTimeMs,
 			.heartBeatDaysMilli = heartBeatDaysMilli,
-			.batteryCentivolts = batteryCentivolts,
+			.batteryMillivolts = batteryMillivolts,
 		};
 
 		if (!startupStatusSent && sms_network_ready(sim7080Information))

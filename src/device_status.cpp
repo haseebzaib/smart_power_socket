@@ -49,7 +49,7 @@ namespace device_status
                            std::span<const sensors::hlw811x::measurements, outletCount> measurements,
                            int64_t bootTimeMs,
                            uint32_t heartBeatDaysMilli,
-                           uint16_t batteryCentivolts)
+                           uint32_t batteryMillivolts)
     {
         snapshot status{};
 
@@ -59,7 +59,7 @@ namespace device_status
         status.longitude = modemInformation.longitude.data();
         status.upDaysMilli = uptime_days_milli(bootTimeMs);
         status.heartBeatDaysMilli = heartBeatDaysMilli;
-        status.batteryCentivolts = batteryCentivolts;
+        status.batteryMillivolts = batteryMillivolts;
 
         for (std::size_t i = 0; i < outletCount; ++i)
         {
@@ -87,6 +87,7 @@ namespace device_status
 
         format_milli(upDays, sizeof(upDays), status.upDaysMilli);
         format_milli(heartBeatDays, sizeof(heartBeatDays), status.heartBeatDaysMilli);
+        const uint32_t batteryCentivolts = (status.batteryMillivolts + 5U) / 10U;
 
         return std::snprintf(buffer,
                              bufferSize,
@@ -110,8 +111,8 @@ namespace device_status
                              status.outletOn[2] ? 1 : 0,
                              status.outletOn[3] ? 1 : 0,
                              status.rssiDbm,
-                             static_cast<unsigned int>(status.batteryCentivolts / 100U),
-                             static_cast<unsigned int>(status.batteryCentivolts % 100U),
+                             static_cast<unsigned int>(batteryCentivolts / 100U),
+                             static_cast<unsigned int>(batteryCentivolts % 100U),
                              status.latitude,
                              status.longitude,
                              static_cast<int>(firmwareVersion.size()),

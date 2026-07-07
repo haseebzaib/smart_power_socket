@@ -109,7 +109,7 @@ namespace sms_commands
                                                                        ctx.measurements,
                                                                        ctx.bootTimeMs,
                                                                        ctx.heartBeatDaysMilli,
-                                                                       ctx.batteryCentivolts);
+                                                                       ctx.batteryMillivolts);
 
         std::array<char, 192> statusText{};
         int statusLen = device_status::format_status_message(status, statusText.data(), statusText.size());
@@ -119,6 +119,11 @@ namespace sms_commands
             LOG_ERR("status response formatting failed");
             return false;
         }
+
+        LOG_INF("status battery mV %u, payload: %.*s",
+                static_cast<unsigned int>(ctx.batteryMillivolts),
+                statusLen,
+                statusText.data());
 
         if (heading.empty())
         {
