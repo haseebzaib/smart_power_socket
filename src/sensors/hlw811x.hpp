@@ -59,7 +59,7 @@ public:
 
 private:
 	static constexpr uint32_t muxSettleUs = 1000;
-	static constexpr uint32_t defaultTimeoutMs = 10000;
+	static constexpr uint32_t defaultTimeoutMs = 800;
 
 	bool validDevice(uint8_t deviceNumber) const;
 

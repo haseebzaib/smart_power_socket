@@ -51,6 +51,7 @@ const hlw811x_pga baselinePga = {
 };
 
 std::array<int, 4> energyMeterErr;
+std::array<int64_t, 4> nextEnergyMeterRetryMs;
 
 std::array<sensors::hlw811x::measurements, 4> acMeasurements;
 std::array<hardware::gpioCon *, device_status::outletCount> outletRelays = {{
@@ -67,6 +68,8 @@ alerts::utilityPowerMonitor utilityPowerAlerts;
 alerts::devicePowerMonitor devicePowerAlerts;
 alerts::frequencyMonitor frequencyAlerts;
 alerts::powerFactorMonitor powerFactorAlerts;
+
+constexpr int64_t energyMeterRetryIntervalMs = 30000;
 
 bool sms_network_ready(const cellular::sim7080::modemInformation &modemInfo)
 {
@@ -93,7 +96,15 @@ int main(void)
 	for (uint8_t meter = 1; meter <= 4; ++meter)
 	{
 		const hlw811x_resistor_ratio ratio = app_config::ratio_for_outlet(meter - 1);
+		LOG_INF("Configuring HLW811x meter %u", static_cast<unsigned int>(meter));
 		energyMeterErr[meter - 1] = energyMeters.configureIndividual(meter, ratio, baselinePga);
+		LOG_INF("HLW811x meter %u configure ret: %d",
+				static_cast<unsigned int>(meter),
+				energyMeterErr[meter - 1]);
+		if (energyMeterErr[meter - 1] != 0)
+		{
+			nextEnergyMeterRetryMs[meter - 1] = k_uptime_get() + energyMeterRetryIntervalMs;
+		}
 	}
 
 	const uint8_t startupRelayMask = app_config::relay_state_valid() ? app_config::relay_on_mask() : 0x0f;
@@ -116,8 +127,21 @@ int main(void)
 		{
 			if (energyMeterErr[meter - 1] != 0)
 			{
+				const int64_t nowMs = k_uptime_get();
+				if (nowMs < nextEnergyMeterRetryMs[meter - 1])
+				{
+					continue;
+				}
+
 				const hlw811x_resistor_ratio ratio = app_config::ratio_for_outlet(meter - 1);
 				energyMeterErr[meter - 1] = energyMeters.configureIndividual(meter, ratio, baselinePga);
+				if (energyMeterErr[meter - 1] != 0)
+				{
+					nextEnergyMeterRetryMs[meter - 1] = nowMs + energyMeterRetryIntervalMs;
+					LOG_WRN("HLW811x meter %u configure retry failed: %d",
+							static_cast<unsigned int>(meter),
+							energyMeterErr[meter - 1]);
+				}
 			}
 			else
 			{
