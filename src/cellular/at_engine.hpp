@@ -110,6 +110,8 @@ namespace cellular
 
 
 
+        bool initialized = false;
+
         struct pendingCommand {
             bool active = false;
             bool done = false;

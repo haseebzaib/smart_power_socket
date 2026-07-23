@@ -6,7 +6,14 @@ LOG_MODULE_REGISTER(sim7080, LOG_LEVEL_INF);
 namespace cellular
 {
 
-    sim7080::sim7080(const device *uart, const gpio_dt_spec pwrKey, const gpio_flags_t pwrKeyFlags) : atEngine_(uart), pwrKey_(pwrKey, pwrKeyFlags)
+    sim7080::sim7080(const device *uart,
+                     const gpio_dt_spec pwrKey,
+                     const gpio_flags_t pwrKeyFlags,
+                     const gpio_dt_spec dtr,
+                     const gpio_flags_t dtrFlags)
+        : atEngine_(uart),
+          pwrKey_(pwrKey, pwrKeyFlags),
+          dtr_(dtr, dtrFlags)
     {
     }
 
@@ -16,52 +23,116 @@ namespace cellular
 
     int sim7080::init()
     {
+        int ret = pwrKey_.init();
+        if (ret != 0)
+        {
+            LOG_ERR("PWRKEY GPIO init failed: %d", ret);
+            return ret;
+        }
 
-        pwrKey_.init();
-        atEngine_.init();
+        ret = dtr_.init();
+        if (ret != 0)
+        {
+            LOG_ERR("DTR GPIO init failed: %d", ret);
+            return ret;
+        }
+
+        // AT+CSCLK=1 is auto-saved by the modem. Keeping DTR low prevents an
+        // already-powered modem from remaining asleep across an MCU restart.
+        ret = dtr_.set(0);
+        if (ret != 0)
+        {
+            LOG_ERR("Failed to drive DTR low: %d", ret);
+            return ret;
+        }
+
+        ret = atEngine_.init();
+        if (ret != 0)
+        {
+            LOG_ERR("Modem UART init failed: %d", ret);
+            return ret;
+        }
 
         LOG_INF("GSM Init Started");
 
-        if (send_with_retry(atAT, 3, defaultCommandTimeoutMs) != atEngine::atResult::OK)
+        // First allow an already-on or still-booting modem to wake and answer.
+        // PWRKEY is a state-changing input, so only pulse it after this grace
+        // period has expired.
+        if (!wait_until_responsive(initialReadyWaitMs))
         {
-            pwr_key_pulse();
-            k_msleep(25000);
-            send_with_retry(atAT, 20, defaultCommandTimeoutMs);
+            LOG_WRN("Modem did not wake through DTR; pulsing PWRKEY once");
+            ret = pwr_key_pulse();
+            if (ret != 0)
+            {
+                LOG_ERR("PWRKEY pulse failed: %d", ret);
+                return ret;
+            }
+
+            if (!wait_until_responsive(postPowerKeyReadyWaitMs))
+            {
+                LOG_ERR("Modem is not responsive after PWRKEY pulse");
+                return -ETIMEDOUT;
+            }
         }
 
-        send_with_retry(atATE0, 5, defaultCommandTimeoutMs);
+        auto require_command = [this](std::string_view command, const char *name)
+        {
+            const atEngine::atResult result =
+                send_with_retry(command, ipCommandRetries, defaultCommandTimeoutMs);
+            if (result != atEngine::atResult::OK)
+            {
+                LOG_ERR("%s failed during modem init, result %d",
+                        name,
+                        static_cast<int>(result));
+                return false;
+            }
+            return true;
+        };
 
-        // atEngine_.send_command(atATE0, defaultCommandTimeoutMs);
-        send_with_retry(atAT, 10, defaultCommandTimeoutMs);
-        send_with_retry(atATE0, 5, defaultCommandTimeoutMs);
-
-        send_with_retry(atSetATCREG, ipCommandRetries, defaultCommandTimeoutMs);
-        send_with_retry(atSetATCOPS, ipCommandRetries, defaultCommandTimeoutMs);
-        send_with_retry(atSetATCOPSFmt, ipCommandRetries, defaultCommandTimeoutMs);
-        send_with_retry(atSetATCGATT, ipCommandRetries, defaultCommandTimeoutMs);
+        if (!require_command(atATE0, "ATE0") ||
+            !require_command(atSetATCREG, "CREG configuration") ||
+            !require_command(atSetATCOPS, "COPS automatic selection") ||
+            !require_command(atSetATCOPSFmt, "COPS format") ||
+            !require_command(atSetATCGATT, "packet attach"))
+        {
+            return -EIO;
+        }
 
         std::array<char, 64> cmd{};
         int len = std::snprintf(cmd.data(),
                                 cmd.size(),
                                 atSetATCGDCONT,
                                 pdpContext);
-        send_with_retry(std::string_view{cmd.data(), len}, ipCommandRetries, defaultCommandTimeoutMs);
+        if (len < 0 || static_cast<std::size_t>(len) >= cmd.size() ||
+            !require_command(std::string_view{cmd.data(), static_cast<std::size_t>(len)},
+                             "PDP context"))
+        {
+            return -EIO;
+        }
 
         int len1 = std::snprintf(cmd.data(),
                                  cmd.size(),
                                  atSetATCNCFG,
                                  pdpContext);
-        send_with_retry(std::string_view{cmd.data(), len1}, ipCommandRetries, defaultCommandTimeoutMs);
-
-        send_with_retry(atSetATCNMP, ipCommandRetries, defaultCommandTimeoutMs);
-        send_with_retry(atSetATCMNB, ipCommandRetries, defaultCommandTimeoutMs);
-        send_with_retry(atSetATCNACT, ipCommandRetries, defaultCommandTimeoutMs);
+        if (len1 < 0 || static_cast<std::size_t>(len1) >= cmd.size() ||
+            !require_command(std::string_view{cmd.data(), static_cast<std::size_t>(len1)},
+                             "application PDP context") ||
+            !require_command(atSetATCNMP, "preferred radio mode") ||
+            !require_command(atSetATCMNB, "NB-IoT mode") ||
+            !require_command(atSetATCNACT, "PDP deactivation"))
+        {
+            return -EIO;
+        }
 
         // SMS: text mode, and read/write/store all on SIM storage
-        send_with_retry(atSetATCMGF, ipCommandRetries, defaultCommandTimeoutMs);
-        send_with_retry(atSetATCSMS, ipCommandRetries, defaultCommandTimeoutMs);
-        send_with_retry(atSetATCPMS, ipCommandRetries, defaultCommandTimeoutMs);
+        if (!require_command(atSetATCMGF, "SMS text mode") ||
+            !require_command(atSetATCSMS, "SMS service") ||
+            !require_command(atSetATCPMS, "SMS storage"))
+        {
+            return -EIO;
+        }
 
+        LOG_INF("GSM Init Complete");
         return 0;
     }
 
@@ -357,6 +428,28 @@ namespace cellular
         return result;
     }
 
+    bool sim7080::wait_until_responsive(uint32_t timeoutMs)
+    {
+        const int64_t deadlineMs = k_uptime_get() + timeoutMs;
+        int attempts = 0;
+
+        do
+        {
+            ++attempts;
+            if (atEngine_.send_command(atAT, readinessProbeTimeoutMs) ==
+                atEngine::atResult::OK)
+            {
+                LOG_INF("Modem responsive after %d AT probe(s)", attempts);
+                return true;
+            }
+
+            k_msleep(250);
+        } while (k_uptime_get() < deadlineMs);
+
+        LOG_WRN("Modem did not respond to %d AT probe(s)", attempts);
+        return false;
+    }
+
     void sim7080::ensure_data_connection()
     {
         cellular::atEngine::atResponse atResponse_{};
@@ -463,7 +556,14 @@ namespace cellular
                                 cmd.size(),
                                 atSetATCNCFG,
                                 pdpContext);
-        send_with_retry(std::string_view{cmd.data(), len}, ipCommandRetries, defaultCommandTimeoutMs);
+        if (len < 0 || static_cast<std::size_t>(len) >= cmd.size())
+        {
+            LOG_ERR("CNCFG command formatting failed");
+            return;
+        }
+        send_with_retry(std::string_view{cmd.data(), static_cast<std::size_t>(len)},
+                        ipCommandRetries,
+                        defaultCommandTimeoutMs);
         send_with_retry(atSetATCNACT, ipCommandRetries, defaultCommandTimeoutMs);
     }
 
@@ -777,13 +877,22 @@ namespace cellular
         return result.ec == std::errc{} && result.ptr == end;
     }
 
-    void sim7080::pwr_key_pulse()
+    int sim7080::pwr_key_pulse()
     {
-
-        pwrKey_.set(1);
+        int ret = pwrKey_.set(1);
+        if (ret != 0)
+        {
+            return ret;
+        }
         k_msleep(4000);
-        pwrKey_.set(0);
-        k_msleep(2000);
+
+        ret = pwrKey_.set(0);
+        if (ret != 0)
+        {
+            return ret;
+        }
+        k_msleep(6000);
+        return 0;
     }
 
     bool sim7080::read_next_sms(smsMessage &out)
@@ -873,7 +982,16 @@ namespace cellular
         // Delete this message so the next queued one surfaces
         std::array<char, 32> cmd{};
         int len = std::snprintf(cmd.data(), cmd.size(), atSetATCMGD, index);
-        send_with_retry(std::string_view{cmd.data(), len}, ipCommandRetries, defaultCommandTimeoutMs);
+        if (len < 0 || static_cast<std::size_t>(len) >= cmd.size())
+        {
+            LOG_ERR("CMGD command formatting failed");
+        }
+        else
+        {
+            send_with_retry(std::string_view{cmd.data(), static_cast<std::size_t>(len)},
+                            ipCommandRetries,
+                            defaultCommandTimeoutMs);
+        }
 
         return true;
     }
@@ -896,8 +1014,16 @@ namespace cellular
                                 static_cast<int>(number.size()),
                                 number.data());
 
+        if (len < 0 || static_cast<std::size_t>(len) >= cmd.size())
+        {
+            LOG_ERR("CMGS command formatting failed");
+            return false;
+        }
+
         cellular::atEngine::atResult result = atEngine_.send_prompt_command(
-            std::string_view{cmd.data(), len}, body, smsSubmitTimeoutMs);
+            std::string_view{cmd.data(), static_cast<std::size_t>(len)},
+            body,
+            smsSubmitTimeoutMs);
 
         if (result != cellular::atEngine::atResult::OK)
         {
@@ -951,8 +1077,16 @@ namespace cellular
                                     static_cast<int>(seg),
                                     static_cast<int>(total));
 
+            if (len < 0 || static_cast<std::size_t>(len) >= cmd.size())
+            {
+                LOG_ERR("CMGSEX command formatting failed");
+                return false;
+            }
+
             cellular::atEngine::atResult result = atEngine_.send_prompt_command(
-                std::string_view{cmd.data(), len}, chunk, smsSubmitTimeoutMs);
+                std::string_view{cmd.data(), static_cast<std::size_t>(len)},
+                chunk,
+                smsSubmitTimeoutMs);
 
             if (result != cellular::atEngine::atResult::OK)
             {

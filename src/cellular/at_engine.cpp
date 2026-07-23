@@ -5,16 +5,35 @@ LOG_MODULE_REGISTER(at_engine, LOG_LEVEL_INF);
 namespace cellular
 {
 
-    atEngine::atEngine(const device *uart) : lineBufferLength(0), rd_index(0), wr_index(0), uart_(uart, atEngine::rxCallback, this)
+    atEngine::atEngine(const device *uart)
+        : initialized(false),
+          currentCommand{},
+          waitingPrompt(false),
+          promptSeen(false),
+          rxBuffer{},
+          commandResponse{},
+          commandResponseLength(0),
+          lineBuffer{},
+          lineBufferLength(0),
+          rd_index(0),
+          wr_index(0),
+          uart_(uart, atEngine::rxCallback, this)
     {
     }
 
     int atEngine::init()
     {
+        if (initialized)
+        {
+            return 0;
+        }
 
-        uart_.init();
-
-        return 0;
+        const int ret = uart_.init();
+        if (ret == 0)
+        {
+            initialized = true;
+        }
+        return ret;
     }
 
     atEngine::~atEngine()
@@ -68,9 +87,13 @@ namespace cellular
         currentCommand.active = true;
         currentCommand.done = false;
         currentCommand.responseSeen = false;
-        currentCommand.expectedPrefix = nullptr;
+        currentCommand.collectingResponse = false;
+        currentCommand.expectedPrefix = {};
         currentCommand.commandText = strip_line_ending(command);
         currentCommand.result = atResult::Timeout;
+
+        commandResponse.fill(0);
+        commandResponseLength = 0;
 
         LOG_INF("SendCmd: %s", command.data());
 

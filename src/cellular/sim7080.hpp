@@ -47,7 +47,11 @@ namespace cellular
             int8_t smsReceived;
         };
 
-        sim7080(const device *uart, const gpio_dt_spec pwrKey, const gpio_flags_t pwrKeyFlags);
+        sim7080(const device *uart,
+                const gpio_dt_spec pwrKey,
+                const gpio_flags_t pwrKeyFlags,
+                const gpio_dt_spec dtr,
+                const gpio_flags_t dtrFlags);
         ~sim7080();
         sim7080(const sim7080 &) = delete;
         sim7080 &operator=(const sim7080 &) = delete;
@@ -89,11 +93,15 @@ namespace cellular
 
         static constexpr int ipCommandRetries = 3;
         static constexpr uint32_t defaultCommandTimeoutMs = 5000;
+        static constexpr uint32_t readinessProbeTimeoutMs = 1000;
+        static constexpr uint32_t initialReadyWaitMs = 30000;
+        static constexpr uint32_t postPowerKeyReadyWaitMs = 60000;
         static constexpr uint32_t locationCommandTimeoutMs = 30000;
         static constexpr uint32_t smsSubmitTimeoutMs = 60000;
         cellular::atEngine::atResult send_with_retry(std::string_view command,
                                                      int retries,
                                                      uint32_t timeoutMs);
+        bool wait_until_responsive(uint32_t timeoutMs);
 
 
         template <std::size_t N>
@@ -115,7 +123,7 @@ namespace cellular
 
         std::string_view trim(std::string_view text);
         bool parse_int(std::string_view text, int &value);
-        void pwr_key_pulse();
+        int pwr_key_pulse();
 
         static constexpr const char *pdpContext = "iot.1nce.net";
 
@@ -169,6 +177,7 @@ namespace cellular
 
         atEngine atEngine_;
         hardware::gpioCon pwrKey_;
+        hardware::gpioCon dtr_;
     };
 
 }

@@ -36,7 +36,8 @@ hardware::gpioCon relay4(GPIO_DT_SPEC_GET(DT_ALIAS(relay4), gpios), GPIO_OUTPUT_
 hardware::adcCon batteryAdc(HARDWARE_ADC_CHANNEL_DT_SPEC_GET(DT_ALIAS(batt_volt_adc)), 110000, 110000);
 
 cellular::sim7080 modemSim7080(DEVICE_DT_GET(DT_ALIAS(gsm_uart)),
-							   GPIO_DT_SPEC_GET(DT_ALIAS(gsm_pwrkey), gpios), GPIO_OUTPUT_INACTIVE);
+							   GPIO_DT_SPEC_GET(DT_ALIAS(gsm_pwrkey), gpios), GPIO_OUTPUT_INACTIVE,
+							   GPIO_DT_SPEC_GET(DT_ALIAS(gsm_dtr), gpios), GPIO_OUTPUT_INACTIVE);
 
 sensors::hlw811x energyMeters(
 	DEVICE_DT_GET(DT_ALIAS(hlw_uart)),
@@ -70,6 +71,7 @@ alerts::frequencyMonitor frequencyAlerts;
 alerts::powerFactorMonitor powerFactorAlerts;
 
 constexpr int64_t energyMeterRetryIntervalMs = 30000;
+constexpr int64_t modemInitRetryIntervalMs = 30000;
 
 bool sms_network_ready(const cellular::sim7080::modemInformation &modemInfo)
 {
@@ -113,9 +115,11 @@ int main(void)
 		outletRelays[i]->set((startupRelayMask & (1U << i)) != 0U ? 0 : 1);
 	}
 
-	// k_msleep(5000);
-
-	modemSim7080.init();
+	int modemInitRet = modemSim7080.init();
+	bool modemReady = modemInitRet == 0;
+	int64_t nextModemInitRetryMs =
+		modemReady ? 0 : k_uptime_get() + modemInitRetryIntervalMs;
+	LOG_INF("Modem init ret: %d", modemInitRet);
 
 	cellular::sim7080::modemInformation sim7080Information{};
 	bool startupStatusSent = false;
@@ -173,6 +177,28 @@ int main(void)
 			LOG_ERR("Battery ADC read failed: %d", batteryRet);
 		}
 		LOG_INF("battery mV %u", static_cast<unsigned int>(batteryMillivolts));
+
+		if (!modemReady)
+		{
+			const int64_t nowMs = k_uptime_get();
+			if (nowMs >= nextModemInitRetryMs)
+			{
+				LOG_INF("Retrying modem initialization");
+				modemInitRet = modemSim7080.init();
+				modemReady = modemInitRet == 0;
+				LOG_INF("Modem init retry ret: %d", modemInitRet);
+				if (!modemReady)
+				{
+					nextModemInitRetryMs = k_uptime_get() + modemInitRetryIntervalMs;
+				}
+			}
+
+			if (!modemReady)
+			{
+				k_msleep(500);
+				continue;
+			}
+		}
 
 		modemSim7080.loop(sim7080Information);
 

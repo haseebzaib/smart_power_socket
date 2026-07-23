@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SPS SMS Commands</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      line-height: 1.45;
+      margin: 32px;
+      color: #111;
+      background: #fff;
+    }
+    h1, h2 {
+      margin: 0 0 12px;
+    }
+    h1 {
+      font-size: 24px;
+      margin-bottom: 24px;
+    }
+    h2 {
+      font-size: 18px;
+      margin-top: 28px;
+      border-bottom: 1px solid #ccc;
+      padding-bottom: 6px;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 10px 0 18px;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 8px;
+      vertical-align: top;
+      text-align: left;
+    }
+    th {
+      background: #f2f2f2;
+    }
+    pre {
+      background: #f7f7f7;
+      border: 1px solid #ddd;
+      padding: 10px;
+      white-space: pre-wrap;
+      margin: 8px 0;
+    }
+    code {
+      font-family: Consolas, monospace;
+    }
+  </style>
+</head>
+<body>
+  <h1>SPS SMS Commands</h1>
+
+  <h2>Get Status</h2>
+  <table>
+    <tr><th>Send SMS</th><th>Output SMS 1</th><th>Output SMS 2</th></tr>
+    <tr>
+      <td><pre>getStatus</pre></td>
+      <td><pre>Utility=ON
+Device=0110
+Outlet=1111
+RSL=-101
+Batt=4.44
+Lat=42.027998
+Lon=-91.631620
+FW=001.00
+HBD=0.000
+UpDays=0.123</pre></td>
+      <td><pre>Outlet=1111
+1=119.640V,0.001A,-0.064W
+2=119.390V,0.002A,-0.031W
+3=119.340V,0.035A,4.262W
+4=119.190V,0.001A,0.000W</pre></td>
+    </tr>
+  </table>
+
+  <h2>Outlet Data</h2>
+  <table>
+    <tr><th>Send SMS</th><th>Output</th></tr>
+    <tr>
+      <td><pre>GetOutletData
+OutletData</pre></td>
+      <td><pre>One SMS per outlet:</pre><pre>OutletData=1
+V=119.640V
+I=0.001A
+P=-0.064W
+S=0.120VA
+E=123Wh
+F=60.00Hz
+PF=0.99</pre></td>
+    </tr>
+    <tr>
+      <td><pre>GetOutletData 1
+GetOutletData=1
+OutletData 4</pre></td>
+      <td><pre>OutletData=1
+V=119.640V
+I=0.001A
+P=-0.064W
+S=0.120VA
+E=123Wh
+F=60.00Hz
+PF=0.99</pre></td>
+    </tr>
+  </table>
+
+  <h2>Turn Outlets On</h2>
+  <table>
+    <tr><th>Send SMS</th><th>Output</th></tr>
+    <tr>
+      <td><pre>DeviceOn=1001</pre></td>
+      <td><pre>OK DeviceOn</pre></td>
+    </tr>
+  </table>
+
+  <h2>Turn Outlets Off</h2>
+  <table>
+    <tr><th>Send SMS</th><th>Output</th></tr>
+    <tr>
+      <td><pre>DeviceOff=0110</pre></td>
+      <td><pre>OK DeviceOff</pre></td>
+    </tr>
+  </table>
+
+  <h2>Reboot Multiple Outlets</h2>
+  <table>
+    <tr><th>Send SMS</th><th>Output</th></tr>
+    <tr>
+      <td><pre>DeviceReboot=0101</pre></td>
+      <td><pre>OK DeviceReboot</pre></td>
+    </tr>
+  </table>
+
+  <h2>Reboot One Outlet</h2>
+  <table>
+    <tr><th>Send SMS</th><th>Output</th></tr>
+    <tr>
+      <td><pre>Reboot 1
+Reboot=4</pre></td>
+      <td><pre>OK Reboot</pre></td>
+    </tr>
+  </table>
+
+  <h2>Calibration Instructions</h2>
+  <table>
+    <tr><th>Send SMS</th><th>Output</th></tr>
+    <tr>
+      <td><pre>RunCalibration</pre></td>
+      <td><pre>RunCalibration
+Use: RunCalibration 1 V=120.000
+Optional: F=60.00 P=60.000</pre></td>
+    </tr>
+  </table>
+
+  <h2>Run Calibration</h2>
+  <table>
+    <tr><th>Send SMS</th><th>Output</th></tr>
+    <tr>
+      <td><pre>RunCalibration 1 V=120.000
+RunCalibration 2 V=120.000
+RunCalibration 3 V=120.000
+RunCalibration 4 V=120.000</pre></td>
+      <td><pre>Calibration=OK
+Outlet=1
+Vref=120.000V
+Vmeas=128.700V
+K2=1.072500</pre></td>
+    </tr>
+    <tr>
+      <td><pre>RunCalibration 1 V=120.000 F=60.00 P=60.000</pre></td>
+      <td><pre>Calibration=OK
+Outlet=1
+Vref=120.000V
+Vmeas=128.700V
+K2=1.072500</pre></td>
+    </tr>
+  </table>
+
+  <h2>Command Errors</h2>
+  <table>
+    <tr><th>Command</th><th>Output</th></tr>
+    <tr><td><pre>DeviceOn</pre></td><td><pre>ERR DeviceOn</pre></td></tr>
+    <tr><td><pre>DeviceOff</pre></td><td><pre>ERR DeviceOff</pre></td></tr>
+    <tr><td><pre>DeviceReboot</pre></td><td><pre>ERR DeviceReboot</pre></td></tr>
+    <tr><td><pre>Reboot</pre></td><td><pre>ERR Reboot</pre></td></tr>
+    <tr><td><pre>GetOutletData</pre></td><td><pre>ERR GetOutletData</pre></td></tr>
+    <tr><td><pre>RunCalibration all V=120.000</pre></td><td><pre>ERR RunCalibration outlet</pre></td></tr>
+  </table>
+
+  <h2>Startup Output</h2>
+  <table>
+    <tr><th>Output SMS 1</th><th>Output SMS 2</th></tr>
+    <tr>
+      <td><pre>SPS is starting
+Utility=ON
+Device=0110
+Outlet=1111
+RSL=-101
+Batt=4.44
+Lat=42.027998
+Lon=-91.631620
+FW=001.00
+HBD=0.000
+UpDays=0.001</pre></td>
+      <td><pre>Outlet=1111
+1=119.640V,0.001A,-0.064W
+2=119.390V,0.002A,-0.031W
+3=119.340V,0.035A,4.262W
+4=119.190V,0.001A,0.000W</pre></td>
+    </tr>
+  </table>
+
+  <h2>Utility Power Lost Alert</h2>
+  <table>
+    <tr><th>Output</th></tr>
+    <tr>
+      <td><pre>Alert=Utility power lost
+Utility=OFF
+Device=0110
+Outlet=1111
+RSL=-101
+Batt=4.44
+Lat=42.027998
+Lon=-91.631620
+FW=001.00
+HBD=0.000</pre></td>
+    </tr>
+  </table>
+
+  <h2>Utility Power Restored Alert</h2>
+  <table>
+    <tr><th>Output SMS 1</th><th>Output SMS 2</th></tr>
+    <tr>
+      <td><pre>Alert=Utility power restored
+Utility=ON
+Device=0110
+Outlet=1111
+RSL=-101
+Batt=4.44
+Lat=42.027998
+Lon=-91.631620
+FW=001.00
+HBD=0.000</pre></td>
+      <td><pre>Outlet=1111
+1=119.640V,0.001A,-0.064W
+2=119.390V,0.002A,-0.031W
+3=119.340V,0.035A,4.262W
+4=119.190V,0.001A,0.000W</pre></td>
+    </tr>
+  </table>
+
+  <h2>Device Power Alerts</h2>
+  <table>
+    <tr><th>Output</th></tr>
+    <tr>
+      <td><pre>Alert=Device power lost
+Outlet=3
+3=119.340V,0.000A,0.000W</pre></td>
+    </tr>
+    <tr>
+      <td><pre>Alert=Device power restored
+Outlet=3
+3=119.340V,0.035A,4.262W</pre></td>
+    </tr>
+  </table>
+
+  <h2>Frequency Alerts</h2>
+  <table>
+    <tr><th>Output</th></tr>
+    <tr><td><pre>Alert=Frequency bad
+Freq=57.80Hz</pre></td></tr>
+    <tr><td><pre>Alert=Frequency restored
+Freq=60.01Hz</pre></td></tr>
+  </table>
+
+  <h2>Power Factor Alerts</h2>
+  <table>
+    <tr><th>Output</th></tr>
+    <tr>
+      <td><pre>Alert=Power factor bad
+PF=0.72
+Outlet=2
+2=119.390V,0.500A,31.000W</pre></td>
+    </tr>
+    <tr>
+      <td><pre>Alert=Power factor restored
+PF=0.90
+Outlet=2
+2=119.390V,0.500A,53.000W</pre></td>
+    </tr>
+  </table>
+</body>
+</html>
