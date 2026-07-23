@@ -47,7 +47,7 @@ namespace cellular
 
         while (pop_single(byte) == 0)
         {
-            LOG_INF("processRx: %c", static_cast<char>(byte));
+            LOG_DBG("processRx: %c", static_cast<char>(byte));
             onRxByte(byte);
         }
     }
@@ -334,6 +334,11 @@ namespace cellular
                 line.starts_with("+CME ERROR:") ||
                 line.starts_with("+CMS ERROR:"))
             {
+                LOG_WRN("Command %.*s failed: %.*s",
+                        static_cast<int>(currentCommand.commandText.size()),
+                        currentCommand.commandText.data(),
+                        static_cast<int>(line.size()),
+                        line.data());
                 currentCommand.result = atResult::Error;
                 currentCommand.done = true;
                 currentCommand.active = false;

@@ -75,64 +75,78 @@ namespace cellular
             }
         }
 
-        auto require_command = [this](std::string_view command, const char *name)
+        bool configurationOk = true;
+        auto configure_command = [this, &configurationOk](std::string_view command,
+                                                           const char *name)
         {
             const atEngine::atResult result =
                 send_with_retry(command, ipCommandRetries, defaultCommandTimeoutMs);
             if (result != atEngine::atResult::OK)
             {
-                LOG_ERR("%s failed during modem init, result %d",
+                LOG_WRN("%s was not applied during modem init, result %d",
                         name,
                         static_cast<int>(result));
-                return false;
+                configurationOk = false;
             }
-            return true;
         };
 
-        if (!require_command(atATE0, "ATE0") ||
-            !require_command(atSetATCREG, "CREG configuration") ||
-            !require_command(atSetATCOPS, "COPS automatic selection") ||
-            !require_command(atSetATCOPSFmt, "COPS format") ||
-            !require_command(atSetATCGATT, "packet attach"))
-        {
-            return -EIO;
-        }
+        // AT responsiveness defines modem availability. Configuration commands
+        // can temporarily fail while the SIM or network stack is still coming
+        // up, so they must not make the application stop polling the modem.
+        configure_command(atATE0, "ATE0");
+        configure_command(atSetATCMEE, "extended modem errors");
+        configure_command(atSetATCREG, "CREG configuration");
+        configure_command(atSetATCOPSFmt, "COPS format");
 
         std::array<char, 64> cmd{};
         int len = std::snprintf(cmd.data(),
                                 cmd.size(),
                                 atSetATCGDCONT,
                                 pdpContext);
-        if (len < 0 || static_cast<std::size_t>(len) >= cmd.size() ||
-            !require_command(std::string_view{cmd.data(), static_cast<std::size_t>(len)},
-                             "PDP context"))
+        if (len < 0 || static_cast<std::size_t>(len) >= cmd.size())
         {
-            return -EIO;
+            LOG_ERR("PDP context command formatting failed");
+            configurationOk = false;
+        }
+        else
+        {
+            configure_command(
+                std::string_view{cmd.data(), static_cast<std::size_t>(len)},
+                "PDP context");
         }
 
         int len1 = std::snprintf(cmd.data(),
                                  cmd.size(),
                                  atSetATCNCFG,
                                  pdpContext);
-        if (len1 < 0 || static_cast<std::size_t>(len1) >= cmd.size() ||
-            !require_command(std::string_view{cmd.data(), static_cast<std::size_t>(len1)},
-                             "application PDP context") ||
-            !require_command(atSetATCNMP, "preferred radio mode") ||
-            !require_command(atSetATCMNB, "NB-IoT mode") ||
-            !require_command(atSetATCNACT, "PDP deactivation"))
+        if (len1 < 0 || static_cast<std::size_t>(len1) >= cmd.size())
         {
-            return -EIO;
+            LOG_ERR("Application PDP context command formatting failed");
+            configurationOk = false;
         }
+        else
+        {
+            configure_command(
+                std::string_view{cmd.data(), static_cast<std::size_t>(len1)},
+                "application PDP context");
+        }
+
+        configure_command(atSetATCNMP, "preferred radio mode");
+        configure_command(atSetATCMNB, "CAT-M mode");
 
         // SMS: text mode, and read/write/store all on SIM storage
-        if (!require_command(atSetATCMGF, "SMS text mode") ||
-            !require_command(atSetATCSMS, "SMS service") ||
-            !require_command(atSetATCPMS, "SMS storage"))
-        {
-            return -EIO;
-        }
+        configure_command(atSetATCMGF, "SMS text mode");
+        configure_command(atSetATCSMS, "SMS service");
+        configure_command(atSetATCPMS, "SMS storage");
 
-        LOG_INF("GSM Init Complete");
+        if (configurationOk)
+        {
+            LOG_INF("GSM Init Complete");
+        }
+        else
+        {
+            LOG_WRN("GSM Init Complete with configuration warnings");
+        }
         return 0;
     }
 
@@ -150,10 +164,11 @@ namespace cellular
         // k_msleep(1000);
         if (modemInformation_.networkRegistration == 1 || modemInformation_.networkRegistration == 5)
         {
-            get_location();
-            // k_msleep(1000);
             ensure_data_connection();
-            // k_msleep(1000);
+            if (modemInformation_.dataConnected)
+            {
+                get_location();
+            }
         }
         else
         {
@@ -475,7 +490,8 @@ namespace cellular
 
         // AT+CNACT? returns one line per PDP context (0..3):
         //   +CNACT: <pdpidx>,<status>,"<ip>"
-        // Only context 0 matters here - it's the one we activate with CNACT=0,2.
+        // Only context 0 matters here; it is configured with CNCFG and activated
+        // using Auto Active when supported, otherwise normal Active.
         int status = -1;
         std::string_view ip{"0.0.0.0"};
         bool found = false;
@@ -510,18 +526,24 @@ namespace cellular
 
             std::string_view rest = trim(data.substr(firstComma + 1));
             std::size_t secondComma = rest.find(',');
-            parse_int(trim(secondComma == std::string_view::npos
-                               ? rest
-                               : rest.substr(0, secondComma)),
-                      status);
+            if (!parse_int(trim(secondComma == std::string_view::npos
+                                    ? rest
+                                    : rest.substr(0, secondComma)),
+                           status))
+            {
+                continue;
+            }
 
             std::size_t firstQuote = oneLine.find('"');
-            std::size_t lastQuote = oneLine.rfind('"');
+            std::size_t secondQuote =
+                firstQuote == std::string_view::npos
+                    ? std::string_view::npos
+                    : oneLine.find('"', firstQuote + 1);
             if (firstQuote != std::string_view::npos &&
-                lastQuote != std::string_view::npos &&
-                lastQuote > firstQuote + 1)
+                secondQuote != std::string_view::npos &&
+                secondQuote > firstQuote + 1)
             {
-                ip = oneLine.substr(firstQuote + 1, lastQuote - firstQuote - 1);
+                ip = oneLine.substr(firstQuote + 1, secondQuote - firstQuote - 1);
             }
 
             found = true;
@@ -543,12 +565,22 @@ namespace cellular
         {
             modemInformation_.dataConnected = 1;
             copy_string_view_to_array(ip, modemInformation_.ipAddress);
+            nextDataConnectionRetryMs_ = 0;
             return;
         }
 
-        // Deactivated -> re-run activation
+        // Deactivated: rate-limit activation attempts so a network outage does
+        // not block every main-loop iteration with repeated commands.
         modemInformation_.dataConnected = 0;
         copy_string_view_to_array("0.0.0.0", modemInformation_.ipAddress);
+
+        const int64_t nowMs = k_uptime_get();
+        if (nowMs < nextDataConnectionRetryMs_)
+        {
+            return;
+        }
+        nextDataConnectionRetryMs_ = nowMs + dataConnectionRetryIntervalMs;
+
         LOG_WRN("Data context down, re-activating");
 
         std::array<char, 64> cmd{};
@@ -564,7 +596,29 @@ namespace cellular
         send_with_retry(std::string_view{cmd.data(), static_cast<std::size_t>(len)},
                         ipCommandRetries,
                         defaultCommandTimeoutMs);
-        send_with_retry(atSetATCNACT, ipCommandRetries, defaultCommandTimeoutMs);
+
+        // Action 2 requests Auto Active. Some SIM7080 firmware/state
+        // combinations reject it even though the command manual lists it.
+        // Fall back to the universally supported one-shot Active action.
+        atEngine::atResult result =
+            atEngine_.send_command(atSetATCNACTAuto, defaultCommandTimeoutMs);
+        if (result == atEngine::atResult::OK)
+        {
+            LOG_INF("Data context 0 set to Auto Active");
+            return;
+        }
+
+        LOG_WRN("CNACT Auto Active failed, trying normal Active");
+        result = atEngine_.send_command(atSetATCNACTActive, defaultCommandTimeoutMs);
+        if (result == atEngine::atResult::OK)
+        {
+            LOG_INF("Data context 0 activation requested");
+        }
+        else
+        {
+            LOG_ERR("Data context 0 activation failed, result %d",
+                    static_cast<int>(result));
+        }
     }
 
     void sim7080::get_carrier()
@@ -686,15 +740,12 @@ namespace cellular
 
     void sim7080::get_location()
     {
-        cellular::atEngine::atResponse atResponse_;
-        std::string_view prefix = "+CNACT:";
-        std::string_view prefixLoc = "+CLBS:";
-
-        atResponse_ = atEngine_.send_command(
-            atGetATCNACT,
+        constexpr std::string_view prefix = "+CLBS:";
+        cellular::atEngine::atResponse atResponse_ = atEngine_.send_command(
+            atGetATCLBS,
             prefix,
             std::span<uint8_t>(data_.data(), data_.size()),
-            defaultCommandTimeoutMs);
+            locationCommandTimeoutMs);
 
         if (atResponse_.result != cellular::atEngine::atResult::OK)
         {
@@ -704,139 +755,68 @@ namespace cellular
         std::string_view line{
             reinterpret_cast<const char *>(data_.data()),
             atResponse_.responseLength};
-
         line = trim(line);
 
-        LOG_DBG("CNACT: Line Data %.*s",
+        LOG_DBG("CLBS: Line Data %.*s",
                 static_cast<int>(line.size()),
                 line.data());
 
         if (!line.starts_with(prefix))
         {
-            LOG_ERR("CNACT: Prefix not found");
+            LOG_ERR("CLBS: Prefix not found");
             return;
         }
 
         std::string_view data = line.substr(prefix.size());
         data = trim(data);
 
-        LOG_DBG("CNACT: Data %.*s",
+        LOG_DBG("CLBS: Data %.*s",
                 static_cast<int>(data.size()),
                 data.data());
 
-        std::size_t commaPos = data.find(',');
-
-        if (commaPos == std::string_view::npos)
+        const std::size_t firstComma = data.find(',');
+        if (firstComma == std::string_view::npos)
         {
-            LOG_ERR("CNACT: comma not found");
+            LOG_ERR("CLBS: location result is incomplete");
             return;
         }
 
-        std::string_view pdpidx = data.substr(0, commaPos);
-        std::string_view nextcomma = data.substr(commaPos + 1);
-
-        std::size_t commaPosNext = nextcomma.find(',');
-
-        std::string_view statusx = nextcomma.substr(0, commaPosNext);
-
-        pdpidx = trim(pdpidx);
-        statusx = trim(statusx);
-
-        LOG_DBG("CNACT: pdpidx %.*s",
-                static_cast<int>(pdpidx.size()),
-                pdpidx.data());
-
-        LOG_DBG("CNACT: statusx %.*s",
-                static_cast<int>(statusx.size()),
-                statusx.data());
-
-        int pdpidxData = 0;
-        int statuxData = 0;
-
-        if (!parse_int(pdpidx, pdpidxData) || !parse_int(statusx, statuxData))
+        int locationCode = -1;
+        if (!parse_int(data.substr(0, firstComma), locationCode) ||
+            locationCode != 0)
         {
-
-            LOG_ERR("CNACT: parse failed");
+            LOG_WRN("CLBS failed with location code %d", locationCode);
             return;
         }
 
-        if (pdpidxData == 0 && statuxData == 1)
+        std::string_view coordinates = data.substr(firstComma + 1);
+        const std::size_t secondComma = coordinates.find(',');
+        if (secondComma == std::string_view::npos)
         {
-
-            atResponse_ = atEngine_.send_command(
-                atGetATCLBS,
-                prefixLoc,
-                std::span<uint8_t>(data_.data(), data_.size()),
-                locationCommandTimeoutMs);
-
-            if (atResponse_.result != cellular::atEngine::atResult::OK)
-            {
-                return;
-            }
-
-            std::string_view line1{
-                reinterpret_cast<const char *>(data_.data()),
-                atResponse_.responseLength};
-
-            line1 = trim(line1);
-
-            LOG_DBG("CLBS: Line Data %.*s",
-                    static_cast<int>(line1.size()),
-                    line1.data());
-
-            if (!line1.starts_with(prefixLoc))
-            {
-                LOG_ERR("CLBS: Prefix not found");
-                return;
-            }
-
-            std::string_view data1 = line1.substr(prefixLoc.size());
-            data1 = trim(data1);
-
-            LOG_DBG("CLBS: Data %.*s",
-                    static_cast<int>(data1.size()),
-                    data1.data());
-
-            std::size_t commaPos1 = data1.find(',');
-
-            if (commaPos1 == std::string_view::npos)
-            {
-                LOG_ERR("CLBS: comma not found");
-                return;
-            }
-            std::string_view data2 = data1.substr(commaPos1 + 1);
-
-            std::size_t commaPos2 = data2.find(',');
-
-            std::string_view longitudeText = data2.substr(0, commaPos2);
-            std::string_view data3 = data2.substr(commaPos2 + 1);
-
-            std::size_t commaPos3 = data3.find(',');
-            std::string_view latitudeText = data3.substr(0, commaPos3);
-
-            longitudeText = trim(longitudeText);
-            latitudeText = trim(latitudeText);
-            LOG_DBG("CLBS: longitudeText %.*s",
-                    static_cast<int>(longitudeText.size()),
-                    longitudeText.data());
-
-            LOG_DBG("CLBS: latitudeText %.*s",
-                    static_cast<int>(latitudeText.size()),
-                    latitudeText.data());
-
-            if (!copy_string_view_to_array(longitudeText, modemInformation_.longitude))
-            {
-                LOG_WRN("Longitude buffer too small");
-            }
-
-            if (!copy_string_view_to_array(latitudeText, modemInformation_.latitude))
-            {
-                LOG_WRN("Latitude buffer too small");
-            }
-
-            LOG_DBG("Longitude: %s", modemInformation_.longitude.data());
-            LOG_DBG("Latitude: %s", modemInformation_.latitude.data());
+            LOG_ERR("CLBS: longitude/latitude missing");
+            return;
         }
+
+        std::string_view longitudeText =
+            trim(coordinates.substr(0, secondComma));
+        std::string_view latitudeAndRest = coordinates.substr(secondComma + 1);
+        const std::size_t thirdComma = latitudeAndRest.find(',');
+        std::string_view latitudeText =
+            trim(thirdComma == std::string_view::npos
+                     ? latitudeAndRest
+                     : latitudeAndRest.substr(0, thirdComma));
+
+        if (!copy_string_view_to_array(longitudeText, modemInformation_.longitude))
+        {
+            LOG_WRN("Longitude buffer too small");
+        }
+        if (!copy_string_view_to_array(latitudeText, modemInformation_.latitude))
+        {
+            LOG_WRN("Latitude buffer too small");
+        }
+
+        LOG_DBG("Longitude: %s", modemInformation_.longitude.data());
+        LOG_DBG("Latitude: %s", modemInformation_.latitude.data());
     }
 
     std::string_view sim7080::trim(std::string_view text)

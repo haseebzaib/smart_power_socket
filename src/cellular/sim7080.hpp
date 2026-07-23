@@ -96,6 +96,7 @@ namespace cellular
         static constexpr uint32_t readinessProbeTimeoutMs = 1000;
         static constexpr uint32_t initialReadyWaitMs = 30000;
         static constexpr uint32_t postPowerKeyReadyWaitMs = 60000;
+        static constexpr int64_t dataConnectionRetryIntervalMs = 30000;
         static constexpr uint32_t locationCommandTimeoutMs = 30000;
         static constexpr uint32_t smsSubmitTimeoutMs = 60000;
         cellular::atEngine::atResult send_with_retry(std::string_view command,
@@ -130,15 +131,15 @@ namespace cellular
         /**set AT commands */
         const std::string_view atAT = "AT\r\n";
         const std::string_view atATE0 = "ATE0\r\n";
+        const std::string_view atSetATCMEE = "AT+CMEE=2\r\n";
         const std::string_view atSetATCREG = "AT+CREG=1\r\n";
-        const std::string_view atSetATCOPS = "AT+COPS=0\r\n";
         const std::string_view atSetATCOPSFmt = "AT+COPS=3,0\r\n";
-        const std::string_view atSetATCGATT = "AT+CGATT=1\r\n";
         static constexpr const char *atSetATCGDCONT = "AT+CGDCONT=1,\"IP\",\"%s\"\r\n";
         static constexpr const char *atSetATCNCFG = "AT+CNCFG=0,1,\"%s\"\r\n";
         const std::string_view atSetATCNMP = "AT+CNMP=38\r\n";
         const std::string_view atSetATCMNB = "AT+CMNB=1\r\n";
-        const std::string_view atSetATCNACT = "AT+CNACT=0,2\r\n";
+        const std::string_view atSetATCNACTAuto = "AT+CNACT=0,2\r\n";
+        const std::string_view atSetATCNACTActive = "AT+CNACT=0,1\r\n";
 
         /**SMS AT commands */
         const std::string_view atSetATCMGF = "AT+CMGF=1\r\n";
@@ -178,6 +179,7 @@ namespace cellular
         atEngine atEngine_;
         hardware::gpioCon pwrKey_;
         hardware::gpioCon dtr_;
+        int64_t nextDataConnectionRetryMs_ = 0;
     };
 
 }
