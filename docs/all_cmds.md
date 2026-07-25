@@ -230,7 +230,9 @@ After this alert, the device sends the outlet report.
 
 ### Device Power Lost/Restored
 
-Sent per outlet when a load/device disconnects or reconnects while utility is ON.
+Sent per outlet when a load/device unexpectedly disconnects or reconnects while utility and that
+outlet's relay are ON. Intentional `DeviceOff`, `DeviceOn`, and relay-off periods reset the
+monitoring baseline and do not produce device power lost/restored alerts.
 
 ```text
 Alert=Device power lost

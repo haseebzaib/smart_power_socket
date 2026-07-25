@@ -72,6 +72,20 @@ namespace alerts
 
         for (std::size_t i = 0; i < device_status::outletCount; ++i)
         {
+            const bool relayOn =
+                i < ctx.relays.size() &&
+                ctx.relays[i] != nullptr &&
+                device_status::outlet_on(*ctx.relays[i]);
+
+            // An unpowered outlet cannot have an unexpected device power loss.
+            // Reset its baseline so an intentional DeviceOff/DeviceOn cycle
+            // does not generate either a false "lost" or "restored" alert.
+            if (!relayOn)
+            {
+                lastState_[i] = state::Unknown;
+                continue;
+            }
+
             const bool connected = device_status::outlet_load_connected(ctx.measurements[i]);
 
             if (lastState_[i] == state::Unknown)
