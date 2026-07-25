@@ -33,6 +33,8 @@ namespace device_status
     bool utility_on(std::span<const sensors::hlw811x::measurements, outletCount> measurements);
     bool outlet_on(hardware::gpioCon &relay);
     bool outlet_load_connected(const sensors::hlw811x::measurements &measurement);
+    bool outlet_load_connected(int32_t currentMa, int32_t activePowerMw);
+    bool outlet_load_clearly_disconnected(int32_t currentMa, int32_t activePowerMw);
     bool average_frequency_centihz(std::span<const sensors::hlw811x::measurements, outletCount> measurements,
                                    int32_t &frequencyCentihz);
     bool frequency_bad(int32_t frequencyCentihz);

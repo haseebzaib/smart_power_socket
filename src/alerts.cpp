@@ -8,6 +8,55 @@ LOG_MODULE_REGISTER(alerts, LOG_LEVEL_INF);
 
 namespace alerts
 {
+    void devicePowerMonitor::outletTracker::reset()
+    {
+        currentMa.fill(0);
+        activePowerMw.fill(0);
+        nextSample = 0;
+        sampleCount = 0;
+        currentSum = 0;
+        activePowerSum = 0;
+        lastState = state::Unknown;
+        candidateState = state::Unknown;
+        candidateCount = 0;
+    }
+
+    void devicePowerMonitor::outletTracker::add(int32_t current, int32_t activePower)
+    {
+        const int32_t normalizedCurrent = current > 0 ? current : 0;
+        const int32_t normalizedPower = activePower > 0 ? activePower : 0;
+
+        if (sampleCount == sampleWindow)
+        {
+            currentSum -= currentMa[nextSample];
+            activePowerSum -= activePowerMw[nextSample];
+        }
+        else
+        {
+            sampleCount++;
+        }
+
+        currentMa[nextSample] = normalizedCurrent;
+        activePowerMw[nextSample] = normalizedPower;
+        currentSum += normalizedCurrent;
+        activePowerSum += normalizedPower;
+        nextSample = (nextSample + 1U) % sampleWindow;
+    }
+
+    bool devicePowerMonitor::outletTracker::ready() const
+    {
+        return sampleCount == sampleWindow;
+    }
+
+    int32_t devicePowerMonitor::outletTracker::average_current_ma() const
+    {
+        return sampleCount == 0 ? 0 : static_cast<int32_t>(currentSum / sampleCount);
+    }
+
+    int32_t devicePowerMonitor::outletTracker::average_active_power_mw() const
+    {
+        return sampleCount == 0 ? 0 : static_cast<int32_t>(activePowerSum / sampleCount);
+    }
 
     bool utilityPowerMonitor::process(const sms_commands::context &ctx, std::string_view recipient)
     {
@@ -65,6 +114,10 @@ namespace alerts
     {
         if (!device_status::utility_on(ctx.measurements))
         {
+            for (outletTracker &outlet : outlets_)
+            {
+                outlet.reset();
+            }
             return false;
         }
 
@@ -82,43 +135,75 @@ namespace alerts
             // does not generate either a false "lost" or "restored" alert.
             if (!relayOn)
             {
-                lastState_[i] = state::Unknown;
+                outlets_[i].reset();
                 continue;
             }
 
-            const bool connected = device_status::outlet_load_connected(ctx.measurements[i]);
+            outletTracker &outlet = outlets_[i];
+            outlet.add(ctx.measurements[i].mA, ctx.measurements[i].mW);
 
-            if (lastState_[i] == state::Unknown)
+            if (!outlet.ready())
             {
-                lastState_[i] = connected ? state::Connected : state::Disconnected;
                 continue;
             }
 
-            if (lastState_[i] == state::Connected && !connected)
+            const int32_t averageCurrentMa = outlet.average_current_ma();
+            const int32_t averageActivePowerMw = outlet.average_active_power_mw();
+
+            if (outlet.lastState == state::Unknown)
             {
-                bool sent = sms_commands::send_device_alert(ctx,
-                                                            recipient,
-                                                            "Device power lost",
-                                                            i);
-                if (sent)
-                {
-                    lastState_[i] = state::Disconnected;
-                    anySent = true;
-                }
+                outlet.lastState =
+                    device_status::outlet_load_connected(averageCurrentMa, averageActivePowerMw)
+                        ? state::Connected
+                        : state::Disconnected;
                 continue;
             }
 
-            if (lastState_[i] == state::Disconnected && connected)
+            state candidate = state::Unknown;
+            if (outlet.lastState == state::Connected &&
+                device_status::outlet_load_clearly_disconnected(averageCurrentMa,
+                                                                averageActivePowerMw))
             {
-                bool sent = sms_commands::send_device_alert(ctx,
-                                                            recipient,
-                                                            "Device power restored",
-                                                            i);
-                if (sent)
-                {
-                    lastState_[i] = state::Connected;
-                    anySent = true;
-                }
+                candidate = state::Disconnected;
+            }
+            else if (outlet.lastState == state::Disconnected &&
+                     device_status::outlet_load_connected(averageCurrentMa,
+                                                          averageActivePowerMw))
+            {
+                candidate = state::Connected;
+            }
+
+            if (candidate == state::Unknown)
+            {
+                outlet.candidateState = state::Unknown;
+                outlet.candidateCount = 0;
+                continue;
+            }
+
+            if (outlet.candidateState != candidate)
+            {
+                outlet.candidateState = candidate;
+                outlet.candidateCount = 1;
+            }
+            else if (outlet.candidateCount < confirmationSamples)
+            {
+                outlet.candidateCount++;
+            }
+
+            if (outlet.candidateCount < confirmationSamples)
+            {
+                continue;
+            }
+
+            const char *alert =
+                candidate == state::Connected ? "Device power restored" : "Device power lost";
+            bool sent = sms_commands::send_device_alert(ctx, recipient, alert, i);
+            if (sent)
+            {
+                outlet.lastState = candidate;
+                outlet.candidateState = state::Unknown;
+                outlet.candidateCount = 0;
+                anySent = true;
             }
         }
 

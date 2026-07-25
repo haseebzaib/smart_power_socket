@@ -381,6 +381,12 @@ namespace sensors
 		RETURN_IF_ERROR(static_cast<int>(hlw811x_get_rms(device, HLW811X_CHANNEL_U, &measOut.mV)));
 		RETURN_IF_ERROR(static_cast<int>(hlw811x_get_rms(device, HLW811X_CHANNEL_A, &measOut.mA)));
 		RETURN_IF_ERROR(static_cast<int>(hlw811x_get_power(device, HLW811X_CHANNEL_A, &measOut.mW)));
+		// This product never exports power, so negative active power near zero
+		// is measurement offset/noise rather than meaningful reverse power.
+		if (measOut.mW < 0)
+		{
+			measOut.mW = 0;
+		}
 		RETURN_IF_ERROR(static_cast<int>(hlw811x_get_power(device, HLW811X_CHANNEL_U, &measOut.apparentmW)));
 		RETURN_IF_ERROR(static_cast<int>(hlw811x_get_energy(device, HLW811X_CHANNEL_A, &measOut.wH)));
 		RETURN_IF_ERROR(static_cast<int>(hlw811x_get_power_factor(device, &measOut.pF)));

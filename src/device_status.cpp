@@ -9,6 +9,8 @@ namespace device_status
     static constexpr int32_t utilityVoltagePresentThresholdMv = 50000;
     static constexpr int32_t outletLoadPresentThresholdMa = 5;
     static constexpr int32_t outletLoadPresentThresholdMw = 500;
+    static constexpr int32_t outletLoadAbsentThresholdMa = 3;
+    static constexpr int32_t outletLoadAbsentThresholdMw = 300;
     static constexpr int32_t frequencyLowBadCentihz = 5800;
     static constexpr int32_t frequencyHighBadCentihz = 6100;
     static constexpr int32_t powerFactorBadCenti = 80;
@@ -45,8 +47,25 @@ namespace device_status
 
     bool outlet_load_connected(const sensors::hlw811x::measurements &measurement)
     {
-        return abs_i32(measurement.mA) >= outletLoadPresentThresholdMa ||
-               abs_i32(measurement.apparentmW) >= outletLoadPresentThresholdMw;
+        return outlet_load_connected(measurement.mA, measurement.mW);
+    }
+
+    bool outlet_load_connected(int32_t currentMa, int32_t activePowerMw)
+    {
+        // Both signals must indicate a real load. At an open outlet the RMS
+        // current channel can hover around its threshold while active power
+        // remains at zero.
+        return abs_i32(currentMa) >= outletLoadPresentThresholdMa &&
+               activePowerMw >= outletLoadPresentThresholdMw;
+    }
+
+    bool outlet_load_clearly_disconnected(int32_t currentMa, int32_t activePowerMw)
+    {
+        // Lower release thresholds provide hysteresis. Since a connected load
+        // requires both signals, either signal falling clearly below its
+        // release threshold is enough to indicate loss.
+        return abs_i32(currentMa) < outletLoadAbsentThresholdMa ||
+               activePowerMw < outletLoadAbsentThresholdMw;
     }
 
     bool average_frequency_centihz(std::span<const sensors::hlw811x::measurements, outletCount> measurements,

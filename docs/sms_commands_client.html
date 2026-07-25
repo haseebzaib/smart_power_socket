@@ -253,6 +253,10 @@ HBD=0.000</pre></td>
   </table>
 
   <h2>Device Power Alerts</h2>
+  <p>Device presence requires both RMS current and active power. The monitor averages five
+  readings, uses separate connect/disconnect levels, and confirms a change for three consecutive
+  averaged readings before sending an alert. Negative active-power readings are reported as zero.
+  Intentional outlet-off periods reset the monitoring baseline and do not generate these alerts.</p>
   <table>
     <tr><th>Output</th></tr>
     <tr>

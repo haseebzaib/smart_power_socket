@@ -42,7 +42,7 @@ Outlet=1111
 Fields:
 
 - `Utility`: `ON` when AC voltage is present on any metering channel.
-- `Device`: load/device connected state per outlet, derived from current or apparent power.
+- `Device`: load/device connected state per outlet, requiring both RMS current and active power.
 - `Outlet`: relay state per outlet, where `1` means relay ON.
 - `RSL`: modem signal in dBm.
 - `Batt`: battery voltage.
@@ -233,6 +233,11 @@ After this alert, the device sends the outlet report.
 Sent per outlet when a load/device unexpectedly disconnects or reconnects while utility and that
 outlet's relay are ON. Intentional `DeviceOff`, `DeviceOn`, and relay-off periods reset the
 monitoring baseline and do not produce device power lost/restored alerts.
+
+The monitor averages five readings per outlet. A load is detected when both average current and
+average active power reach 5 mA and 500 mW. Lower 3 mA and 300 mW release levels provide
+hysteresis, and a state change must remain valid for three consecutive averaged readings before
+an alert is sent. Negative active-power readings are treated and reported as zero.
 
 ```text
 Alert=Device power lost
