@@ -176,7 +176,8 @@ namespace cellular
 
     atEngine::atResult atEngine::send_prompt_command(std::string_view commandLine,
                                                      std::string_view payload,
-                                                     uint32_t timeoutMs)
+                                                     uint32_t promptTimeoutMs,
+                                                     uint32_t submitTimeoutMs)
     {
         uint8_t staleByte{};
         uint32_t staleCount = 0;
@@ -210,7 +211,7 @@ namespace cellular
             reinterpret_cast<const uint8_t *>(commandLine.data()), commandLine.size()));
 
         uint32_t tick = 0;
-        while (tick < timeoutMs && !promptSeen && !currentCommand.done)
+        while (tick < promptTimeoutMs && !promptSeen && !currentCommand.done)
         {
             processRx();
             tick++;
@@ -243,7 +244,10 @@ namespace cellular
         currentCommand.responseSeen = false;
         currentCommand.collectingResponse = false;
         currentCommand.expectedPrefix = {};
-        currentCommand.commandText = {};
+        // Keep the originating command for useful +CMS ERROR diagnostics.
+        // The modem is now receiving the payload, so there is no command echo
+        // left to filter at this point.
+        currentCommand.commandText = strip_line_ending(commandLine);
         currentCommand.result = atResult::Timeout;
 
         commandResponse.fill(0);
@@ -256,7 +260,7 @@ namespace cellular
         uart_.writeIntr(std::span<const uint8_t>(&ctrlZ, 1));
 
         tick = 0;
-        while (tick < timeoutMs)
+        while (tick < submitTimeoutMs)
         {
             processRx();
             if (currentCommand.done)

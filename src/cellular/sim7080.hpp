@@ -99,6 +99,7 @@ namespace cellular
         static constexpr int64_t dataConnectionRetryIntervalMs = 30000;
         static constexpr uint32_t locationCommandTimeoutMs = 30000;
         static constexpr uint32_t smsSubmitTimeoutMs = 60000;
+        static constexpr int64_t smsFailureRetryIntervalMs = 60000;
         cellular::atEngine::atResult send_with_retry(std::string_view command,
                                                      int retries,
                                                      uint32_t timeoutMs);
@@ -180,6 +181,8 @@ namespace cellular
         hardware::gpioCon pwrKey_;
         hardware::gpioCon dtr_;
         int64_t nextDataConnectionRetryMs_ = 0;
+        int64_t nextSmsAttemptMs_ = 0;
+        bool smsCooldownLogged_ = false;
     };
 
 }

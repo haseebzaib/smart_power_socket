@@ -72,6 +72,7 @@ alerts::powerFactorMonitor powerFactorAlerts;
 
 constexpr int64_t energyMeterRetryIntervalMs = 30000;
 constexpr int64_t modemInitRetryIntervalMs = 30000;
+constexpr int64_t startupStatusRetryIntervalMs = 5LL * 60LL * 1000LL;
 
 bool sms_network_ready(const cellular::sim7080::modemInformation &modemInfo)
 {
@@ -123,6 +124,7 @@ int main(void)
 
 	cellular::sim7080::modemInformation sim7080Information{};
 	bool startupStatusSent = false;
+	int64_t nextStartupStatusAttemptMs = 0;
 
 	while (1)
 	{
@@ -232,9 +234,17 @@ int main(void)
 			.batteryMillivolts = batteryMillivolts,
 		};
 
-		if (!startupStatusSent && sms_network_ready(sim7080Information))
+		if (!startupStatusSent &&
+			sms_network_ready(sim7080Information) &&
+			k_uptime_get() >= nextStartupStatusAttemptMs)
 		{
 			startupStatusSent = sms_commands::send_status(smsContext, alert_number, "SPS is starting");
+			if (!startupStatusSent)
+			{
+				nextStartupStatusAttemptMs = k_uptime_get() + startupStatusRetryIntervalMs;
+				LOG_WRN("Startup status failed; retrying in %lld seconds",
+						static_cast<long long>(startupStatusRetryIntervalMs / 1000));
+			}
 		}
 
 		if (sms_network_ready(sim7080Information))

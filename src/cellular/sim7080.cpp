@@ -978,11 +978,38 @@ namespace cellular
 
     bool sim7080::send_sms(std::string_view number, std::string_view body)
     {
+        const int64_t nowMs = k_uptime_get();
+        if (nowMs < nextSmsAttemptMs_)
+        {
+            if (!smsCooldownLogged_)
+            {
+                const int64_t remainingSeconds =
+                    (nextSmsAttemptMs_ - nowMs + 999) / 1000;
+                LOG_WRN("SMS send suppressed during failure cooldown (%lld s remaining)",
+                        static_cast<long long>(remainingSeconds));
+                smsCooldownLogged_ = true;
+            }
+            return false;
+        }
+
+        smsCooldownLogged_ = false;
+
         // if (body.size() <= smsSingleMaxChars)
         // {
-        return send_sms_single(number, body);
+        const bool sent = send_sms_single(number, body);
         // }
-        // return send_sms_long(number, body);
+        // const bool sent = send_sms_long(number, body);
+
+        if (!sent)
+        {
+            nextSmsAttemptMs_ = k_uptime_get() + smsFailureRetryIntervalMs;
+            LOG_WRN("SMS sending paused for %lld seconds after failure",
+                    static_cast<long long>(smsFailureRetryIntervalMs / 1000));
+            return false;
+        }
+
+        nextSmsAttemptMs_ = 0;
+        return true;
     }
 
     bool sim7080::send_sms_single(std::string_view number, std::string_view body)
@@ -1003,6 +1030,7 @@ namespace cellular
         cellular::atEngine::atResult result = atEngine_.send_prompt_command(
             std::string_view{cmd.data(), static_cast<std::size_t>(len)},
             body,
+            defaultCommandTimeoutMs,
             smsSubmitTimeoutMs);
 
         if (result != cellular::atEngine::atResult::OK)
@@ -1066,6 +1094,7 @@ namespace cellular
             cellular::atEngine::atResult result = atEngine_.send_prompt_command(
                 std::string_view{cmd.data(), static_cast<std::size_t>(len)},
                 chunk,
+                defaultCommandTimeoutMs,
                 smsSubmitTimeoutMs);
 
             if (result != cellular::atEngine::atResult::OK)

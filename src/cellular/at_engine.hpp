@@ -87,8 +87,10 @@ namespace cellular
          * Two-phase send for SMS: writes commandLine, waits for the '>' input
          * prompt, then writes payload terminated by Ctrl-Z and waits for OK.
          */
-        atResult send_prompt_command(std::string_view commandLine, std::string_view payload,
-                                     uint32_t timeoutMs);
+        atResult send_prompt_command(std::string_view commandLine,
+                                     std::string_view payload,
+                                     uint32_t promptTimeoutMs,
+                                     uint32_t submitTimeoutMs);
 
 
     private:

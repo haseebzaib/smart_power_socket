@@ -483,8 +483,12 @@ namespace sms_commands
             bool statusSent = ctx.modem.send_sms(recipient,
                                                  std::string_view{statusText.data(), static_cast<std::size_t>(statusLen)});
 
-            bool outletSent = send_outlet_report(ctx, recipient, status);
-            return statusSent && outletSent;
+            if (!statusSent)
+            {
+                return false;
+            }
+
+            return send_outlet_report(ctx, recipient, status);
         }
 
         std::array<char, 192> response{};
@@ -505,8 +509,12 @@ namespace sms_commands
         bool statusSent = ctx.modem.send_sms(recipient,
                                              std::string_view{response.data(), static_cast<std::size_t>(responseLen)});
 
-        bool outletSent = send_outlet_report(ctx, recipient, status);
-        return statusSent && outletSent;
+        if (!statusSent)
+        {
+            return false;
+        }
+
+        return send_outlet_report(ctx, recipient, status);
     }
 
     bool send_alert(const context &ctx,
@@ -531,13 +539,12 @@ namespace sms_commands
         bool alertSent = ctx.modem.send_sms(recipient,
                                             std::string_view{alertText.data(), static_cast<std::size_t>(alertLen)});
 
-        if (!includeOutletReport)
+        if (!alertSent || !includeOutletReport)
         {
             return alertSent;
         }
 
-        bool outletSent = send_outlet_report(ctx, recipient, status);
-        return alertSent && outletSent;
+        return send_outlet_report(ctx, recipient, status);
     }
 
     bool send_device_alert(const context &ctx,
