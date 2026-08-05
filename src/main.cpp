@@ -150,6 +150,10 @@ int main(void)
 			else
 			{
 				int ret = energyMeters.measurement(meter, acMeasurements[meter - 1]);
+				if(ret != 0)
+				{   
+                         acMeasurements[meter - 1] = sensors::hlw811x::measurements{};
+				}
 				LOG_INF("#########START#########");
 				LOG_INF("HLW811x meter %d", static_cast<int>(meter));
 				LOG_INF("ret= %d", ret);
@@ -238,7 +242,7 @@ int main(void)
 			utilityPowerAlerts.process(smsContext, alert_number);
 			devicePowerAlerts.process(smsContext, alert_number);
 			frequencyAlerts.process(smsContext, alert_number);
-			powerFactorAlerts.process(smsContext, alert_number);
+			//powerFactorAlerts.process(smsContext, alert_number);
 		}
 
 		if (sim7080Information.smsReceived)
