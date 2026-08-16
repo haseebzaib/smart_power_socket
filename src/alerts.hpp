@@ -44,20 +44,17 @@ namespace alerts
 
         struct outletTracker
         {
-            std::array<int32_t, sampleWindow> currentMa{};
             std::array<int32_t, sampleWindow> activePowerMw{};
             std::size_t nextSample = 0;
             std::size_t sampleCount = 0;
-            int64_t currentSum = 0;
             int64_t activePowerSum = 0;
             state lastState = state::Unknown;
             state candidateState = state::Unknown;
             uint8_t candidateCount = 0;
 
             void reset();
-            void add(int32_t current, int32_t activePower);
+            void add(int32_t activePower);
             bool ready() const;
-            int32_t average_current_ma() const;
             int32_t average_active_power_mw() const;
         };
 
@@ -84,6 +81,7 @@ namespace alerts
     {
     public:
         bool process(const sms_commands::context &ctx, std::string_view recipient);
+        void reset();
 
     private:
         enum class state

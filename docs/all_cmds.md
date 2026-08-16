@@ -42,11 +42,11 @@ Outlet=1111
 Fields:
 
 - `Utility`: `ON` when AC voltage is present on any metering channel.
-- `Device`: load/device connected state per outlet, requiring both RMS current and active power.
+- `Device`: monitored load/device power state per outlet.
 - `Outlet`: relay state per outlet, where `1` means relay ON.
 - `RSL`: modem signal in dBm.
 - `Batt`: battery voltage.
-- `HBD`: heartbeat days setting.
+- `HBD`: heartbeat interval in days.
 - `UpDays`: firmware uptime in days.
 
 ### `GetOutletData`
@@ -160,10 +160,65 @@ OK Reboot
 
 ### `SetHeartBeatDays`
 
-Command is reserved in firmware and currently only logs receipt.
+Sets the delay between periodic heartbeat messages. The value supports up to three decimal places
+and is saved to flash. `0` disables periodic heartbeats.
 
 ```text
-SetHeartBeatDays
+SetHeartbeatDays=30.43
+```
+
+Response:
+
+```text
+OK SetHeartbeatDays=30.430
+```
+
+The schedule uses monotonic device uptime and therefore restarts after a device reboot. If the
+network is unavailable when a heartbeat is due, one heartbeat is sent when the network returns;
+missed heartbeats are not sent as a burst.
+
+The heartbeat uses the normal status and outlet-report payloads with an `SPS Heartbeat` heading.
+
+## Device Power Detection Settings
+
+The thresholds are universal: one setting applies to all four outlets. Values are in watts and
+are saved to flash.
+
+At startup, an outlet below `1.000 W` is initialized off and an outlet at or above `1.000 W` is
+initialized on, without generating an alert. At runtime, an off outlet must rise above
+`OnThreshold` to change on, and an on outlet must fall below `OffThreshold` to change off. Between
+the two thresholds the previous state is retained.
+
+Defaults:
+
+```text
+OnThreshold=1.2
+OffThreshold=0.7
+```
+
+Responses:
+
+```text
+OK OnThreshold=1.200
+OK OffThreshold=0.700
+```
+
+`OffThreshold` must be lower than `OnThreshold`; invalid values return an error.
+
+## Power Factor Alert Setting
+
+Power-factor alerts are off by default. The setting is saved to flash.
+
+```text
+PowerFactorAlerts=On
+PowerFactorAlerts=Off
+```
+
+Responses:
+
+```text
+OK PowerFactorAlerts=On
+OK PowerFactorAlerts=Off
 ```
 
 ## Startup Message
@@ -234,10 +289,10 @@ Sent per outlet when a load/device unexpectedly disconnects or reconnects while 
 outlet's relay are ON. Intentional `DeviceOff`, `DeviceOn`, and relay-off periods reset the
 monitoring baseline and do not produce device power lost/restored alerts.
 
-The monitor averages five readings per outlet. A load is detected when both average current and
-average active power reach 5 mA and 500 mW. Lower 3 mA and 300 mW release levels provide
-hysteresis, and a state change must remain valid for three consecutive averaged readings before
-an alert is sent. Negative active-power readings are treated and reported as zero.
+The monitor averages five active-power readings independently for each outlet. The universal on
+and off thresholds provide hysteresis, and a state change must remain valid for three consecutive
+averaged readings before an alert is sent. Negative active-power readings are treated and
+reported as zero.
 
 ```text
 Alert=Device power lost
@@ -267,7 +322,7 @@ Freq=60.01Hz
 
 ### Power Factor Bad/Restored
 
-Sent per outlet when a connected load has poor power factor.
+Sent per outlet when a connected load has poor power factor and `PowerFactorAlerts` is enabled.
 
 ```text
 Alert=Power factor bad

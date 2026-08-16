@@ -144,6 +144,40 @@ Reboot=4</pre></td>
     </tr>
   </table>
 
+  <h2>Heartbeat Interval</h2>
+  <p>The interval is measured in uptime days, supports three decimal places, and is saved across
+  restarts. Use zero to disable periodic heartbeats. The uptime counter and heartbeat schedule
+  restart when the SPS reboots.</p>
+  <table>
+    <tr><th>Send SMS</th><th>Output</th></tr>
+    <tr>
+      <td><pre>SetHeartbeatDays=30.43</pre></td>
+      <td><pre>OK SetHeartbeatDays=30.430</pre></td>
+    </tr>
+    <tr>
+      <td><pre>SetHeartbeatDays=0</pre></td>
+      <td><pre>OK SetHeartbeatDays=0.000</pre></td>
+    </tr>
+  </table>
+
+  <h2>Device Power Detection Thresholds</h2>
+  <p>These universal settings apply to all four outlets and are saved across restarts. At startup,
+  power below 1.000 W is off and power at or above 1.000 W is on. During operation, power must rise
+  above the on threshold to change on or fall below the off threshold to change off.</p>
+  <table>
+    <tr><th>Send SMS</th><th>Output</th></tr>
+    <tr><td><pre>OnThreshold=1.2</pre></td><td><pre>OK OnThreshold=1.200</pre></td></tr>
+    <tr><td><pre>OffThreshold=0.7</pre></td><td><pre>OK OffThreshold=0.700</pre></td></tr>
+  </table>
+
+  <h2>Power Factor Alert Setting</h2>
+  <p>Power-factor alerts are off by default. This setting is saved across restarts.</p>
+  <table>
+    <tr><th>Send SMS</th><th>Output</th></tr>
+    <tr><td><pre>PowerFactorAlerts=On</pre></td><td><pre>OK PowerFactorAlerts=On</pre></td></tr>
+    <tr><td><pre>PowerFactorAlerts=Off</pre></td><td><pre>OK PowerFactorAlerts=Off</pre></td></tr>
+  </table>
+
   <h2>Calibration Instructions</h2>
   <table>
     <tr><th>Send SMS</th><th>Output</th></tr>
@@ -253,10 +287,11 @@ HBD=0.000</pre></td>
   </table>
 
   <h2>Device Power Alerts</h2>
-  <p>Device presence requires both RMS current and active power. The monitor averages five
-  readings, uses separate connect/disconnect levels, and confirms a change for three consecutive
-  averaged readings before sending an alert. Negative active-power readings are reported as zero.
-  Intentional outlet-off periods reset the monitoring baseline and do not generate these alerts.</p>
+  <p>The monitor averages five active-power readings independently per outlet, uses the universal
+  on/off thresholds, and confirms a change for three consecutive averaged readings before sending
+  an alert. Startup uses 1.000 W and initializes silently. Negative active-power readings are
+  reported as zero. Intentional outlet-off periods reset the monitoring baseline and do not
+  generate these alerts.</p>
   <table>
     <tr><th>Output</th></tr>
     <tr>
@@ -281,6 +316,7 @@ Freq=60.01Hz</pre></td></tr>
   </table>
 
   <h2>Power Factor Alerts</h2>
+  <p>These alerts are generated only when <code>PowerFactorAlerts=On</code>.</p>
   <table>
     <tr><th>Output</th></tr>
     <tr>

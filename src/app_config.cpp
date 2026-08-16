@@ -29,9 +29,31 @@ namespace app_config
             uint8_t reserved;
         };
 
+        struct alertStorage
+        {
+            uint32_t magic;
+            uint32_t onThresholdMw;
+            uint32_t offThresholdMw;
+            uint8_t version;
+            uint8_t powerFactorAlertsEnabled;
+            uint16_t reserved;
+        };
+
+        struct heartbeatStorage
+        {
+            uint32_t magic;
+            uint32_t daysMilli;
+            uint8_t version;
+            uint8_t reserved[3];
+        };
+
         constexpr uint32_t calibrationMagic = 0x53504341U; // SPCA
         constexpr uint32_t relayMagic = 0x5350524cU;       // SPRL
+        constexpr uint32_t alertMagic = 0x5350414cU;       // SPAL
+        constexpr uint32_t heartbeatMagic = 0x53504842U;   // SPHB
         constexpr uint8_t storageVersion = 1;
+        constexpr uint32_t maxDeviceThresholdMw = 20000000U;
+        constexpr uint32_t maxHeartbeatDaysMilli = 999999U;
         constexpr int32_t defaultK2Micro = static_cast<int32_t>(defaultK2 * ratioScale + 0.5f);
 
         calibrationStorage calibration = {
@@ -48,6 +70,22 @@ namespace app_config
             .valid = 0,
             .onMask = 0,
             .reserved = 0,
+        };
+
+        alertStorage alertSettings = {
+            .magic = alertMagic,
+            .onThresholdMw = defaultOnThresholdMw,
+            .offThresholdMw = defaultOffThresholdMw,
+            .version = storageVersion,
+            .powerFactorAlertsEnabled = 0,
+            .reserved = 0,
+        };
+
+        heartbeatStorage heartbeatSettings = {
+            .magic = heartbeatMagic,
+            .daysMilli = 0,
+            .version = storageVersion,
+            .reserved = {0, 0, 0},
         };
 
         bool settingsReady = false;
@@ -89,6 +127,41 @@ namespace app_config
             relayState.onMask &= 0x0f;
         }
 
+        void sanitize_alert_settings()
+        {
+            if (alertSettings.magic != alertMagic ||
+                alertSettings.version != storageVersion ||
+                alertSettings.onThresholdMw > maxDeviceThresholdMw ||
+                alertSettings.offThresholdMw >= alertSettings.onThresholdMw)
+            {
+                alertSettings.magic = alertMagic;
+                alertSettings.onThresholdMw = defaultOnThresholdMw;
+                alertSettings.offThresholdMw = defaultOffThresholdMw;
+                alertSettings.version = storageVersion;
+                alertSettings.powerFactorAlertsEnabled = 0;
+                alertSettings.reserved = 0;
+                return;
+            }
+
+            alertSettings.powerFactorAlertsEnabled =
+                alertSettings.powerFactorAlertsEnabled != 0 ? 1 : 0;
+        }
+
+        void sanitize_heartbeat_settings()
+        {
+            if (heartbeatSettings.magic != heartbeatMagic ||
+                heartbeatSettings.version != storageVersion ||
+                heartbeatSettings.daysMilli > maxHeartbeatDaysMilli)
+            {
+                heartbeatSettings.magic = heartbeatMagic;
+                heartbeatSettings.daysMilli = 0;
+                heartbeatSettings.version = storageVersion;
+                heartbeatSettings.reserved[0] = 0;
+                heartbeatSettings.reserved[1] = 0;
+                heartbeatSettings.reserved[2] = 0;
+            }
+        }
+
         int settings_set(const char *key, size_t len, settings_read_cb read_cb, void *cb_arg)
         {
             const char *next = nullptr;
@@ -124,6 +197,40 @@ namespace app_config
                 }
 
                 sanitize_relay_state();
+                return 0;
+            }
+
+            if (settings_name_steq(key, "alerts", &next) && next == nullptr)
+            {
+                if (len != sizeof(alertSettings))
+                {
+                    return -EINVAL;
+                }
+
+                const ssize_t read = read_cb(cb_arg, &alertSettings, sizeof(alertSettings));
+                if (read != sizeof(alertSettings))
+                {
+                    return -EIO;
+                }
+
+                sanitize_alert_settings();
+                return 0;
+            }
+
+            if (settings_name_steq(key, "heartbeat", &next) && next == nullptr)
+            {
+                if (len != sizeof(heartbeatSettings))
+                {
+                    return -EINVAL;
+                }
+
+                const ssize_t read = read_cb(cb_arg, &heartbeatSettings, sizeof(heartbeatSettings));
+                if (read != sizeof(heartbeatSettings))
+                {
+                    return -EIO;
+                }
+
+                sanitize_heartbeat_settings();
                 return 0;
             }
 
@@ -164,9 +271,13 @@ namespace app_config
         }
 
         settingsReady = true;
-        LOG_INF("config loaded: relay valid=%u mask=0x%02x",
+        LOG_INF("config loaded: relay valid=%u mask=0x%02x, on=%u mW off=%u mW pf=%u hbd=%u",
                 static_cast<unsigned int>(relayState.valid),
-                static_cast<unsigned int>(relayState.onMask));
+                static_cast<unsigned int>(relayState.onMask),
+                static_cast<unsigned int>(alertSettings.onThresholdMw),
+                static_cast<unsigned int>(alertSettings.offThresholdMw),
+                static_cast<unsigned int>(alertSettings.powerFactorAlertsEnabled),
+                static_cast<unsigned int>(heartbeatSettings.daysMilli));
         return 0;
     }
 
@@ -237,6 +348,85 @@ namespace app_config
         }
 
         return settings_save_one("sps/relay", &relayState, sizeof(relayState));
+    }
+
+    uint32_t on_threshold_mw()
+    {
+        return alertSettings.onThresholdMw;
+    }
+
+    uint32_t off_threshold_mw()
+    {
+        return alertSettings.offThresholdMw;
+    }
+
+    int save_on_threshold_mw(uint32_t thresholdMw)
+    {
+        if (thresholdMw > maxDeviceThresholdMw || thresholdMw <= alertSettings.offThresholdMw)
+        {
+            return -EINVAL;
+        }
+
+        alertSettings.onThresholdMw = thresholdMw;
+        if (!settingsReady)
+        {
+            return 0;
+        }
+
+        return settings_save_one("sps/alerts", &alertSettings, sizeof(alertSettings));
+    }
+
+    int save_off_threshold_mw(uint32_t thresholdMw)
+    {
+        if (thresholdMw >= alertSettings.onThresholdMw)
+        {
+            return -EINVAL;
+        }
+
+        alertSettings.offThresholdMw = thresholdMw;
+        if (!settingsReady)
+        {
+            return 0;
+        }
+
+        return settings_save_one("sps/alerts", &alertSettings, sizeof(alertSettings));
+    }
+
+    bool power_factor_alerts_enabled()
+    {
+        return alertSettings.powerFactorAlertsEnabled != 0;
+    }
+
+    int save_power_factor_alerts_enabled(bool enabled)
+    {
+        alertSettings.powerFactorAlertsEnabled = enabled ? 1 : 0;
+        if (!settingsReady)
+        {
+            return 0;
+        }
+
+        return settings_save_one("sps/alerts", &alertSettings, sizeof(alertSettings));
+    }
+
+    uint32_t heartbeat_days_milli()
+    {
+        return heartbeatSettings.daysMilli;
+    }
+
+    int save_heartbeat_days_milli(uint32_t daysMilli)
+    {
+        if (daysMilli > maxHeartbeatDaysMilli)
+        {
+            return -EINVAL;
+        }
+
+        heartbeatSettings.daysMilli = daysMilli;
+        if (!settingsReady)
+        {
+            return 0;
+        }
+
+        return settings_save_one("sps/heartbeat", &heartbeatSettings, sizeof(heartbeatSettings));
     }
 
 }

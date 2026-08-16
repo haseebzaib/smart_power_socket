@@ -33,18 +33,22 @@ namespace device_status
     bool utility_on(std::span<const sensors::hlw811x::measurements, outletCount> measurements);
     bool outlet_on(hardware::gpioCon &relay);
     bool outlet_load_connected(const sensors::hlw811x::measurements &measurement);
-    bool outlet_load_connected(int32_t currentMa, int32_t activePowerMw);
-    bool outlet_load_clearly_disconnected(int32_t currentMa, int32_t activePowerMw);
     bool average_frequency_centihz(std::span<const sensors::hlw811x::measurements, outletCount> measurements,
                                    int32_t &frequencyCentihz);
     bool frequency_bad(int32_t frequencyCentihz);
     bool power_factor_bad(const sensors::hlw811x::measurements &measurement);
     bool power_factor_restored(const sensors::hlw811x::measurements &measurement);
     uint32_t uptime_days_milli(int64_t bootTimeMs);
+    int64_t heartbeat_interval_ms(uint32_t heartBeatDaysMilli);
+    int64_t next_heartbeat_uptime_ms(int64_t bootTimeMs,
+                                     uint32_t heartBeatDaysMilli,
+                                     int64_t nowMs);
 
     snapshot make_snapshot(const cellular::sim7080::modemInformation &modemInformation,
                            std::span<hardware::gpioCon *, outletCount> relays,
                            std::span<const sensors::hlw811x::measurements, outletCount> measurements,
+                           std::span<const bool, outletCount> monitoredLoadConnected,
+                           std::span<const bool, outletCount> monitoredLoadStateValid,
                            int64_t bootTimeMs,
                            uint32_t heartBeatDaysMilli,
                            uint32_t batteryMillivolts);

@@ -48,8 +48,17 @@ namespace sms_commands
     void handle_run_calibration(const context &ctx,
                                 std::string_view sender,
                                 std::string_view body);
+    void handle_on_threshold(const context &ctx,
+                             std::string_view sender,
+                             std::string_view body);
+    void handle_off_threshold(const context &ctx,
+                              std::string_view sender,
+                              std::string_view body);
+    void handle_power_factor_alerts(const context &ctx,
+                                    std::string_view sender,
+                                    std::string_view body);
 
-    constexpr std::array<commandDefinition, 10> commands = {{
+    constexpr std::array<commandDefinition, 13> commands = {{
         {"getStatus", handle_get_status},
         {"SetHeartBeatDays", handle_set_heart_beat_days},
         {"DeviceOn", handle_device_on},
@@ -60,6 +69,9 @@ namespace sms_commands
         {"OutletData", handle_get_outlet_data},
         {"RunCalibration", handle_run_calibration},
         {"CalibrateOutlet", handle_run_calibration},
+        {"OnThreshold", handle_on_threshold},
+        {"OffThreshold", handle_off_threshold},
+        {"PowerFactorAlerts", handle_power_factor_alerts},
     }};
 
     constexpr uint32_t relayRebootDelayMs = 1000;
@@ -350,6 +362,26 @@ namespace sms_commands
         return true;
     }
 
+    bool parse_on_off(std::string_view text, bool &enabled)
+    {
+        text = trim(text);
+        if (ascii_equals_ignore_case(text, "on") ||
+            ascii_equals_ignore_case(text, "enable") || text == "1")
+        {
+            enabled = true;
+            return true;
+        }
+
+        if (ascii_equals_ignore_case(text, "off") ||
+            ascii_equals_ignore_case(text, "disable") || text == "0")
+        {
+            enabled = false;
+            return true;
+        }
+
+        return false;
+    }
+
     int32_t abs_i32(int32_t value)
     {
         if (value >= 0)
@@ -408,6 +440,28 @@ namespace sms_commands
         return ctx.modem.send_sms(recipient, text);
     }
 
+    bool send_threshold_ack(const context &ctx,
+                            std::string_view recipient,
+                            std::string_view name,
+                            uint32_t thresholdMw)
+    {
+        std::array<char, 64> text{};
+        const int len = std::snprintf(text.data(),
+                                      text.size(),
+                                      "OK %.*s=%u.%03u",
+                                      static_cast<int>(name.size()),
+                                      name.data(),
+                                      static_cast<unsigned int>(thresholdMw / 1000U),
+                                      static_cast<unsigned int>(thresholdMw % 1000U));
+        if (len <= 0 || static_cast<std::size_t>(len) >= text.size())
+        {
+            return false;
+        }
+
+        return ctx.modem.send_sms(recipient,
+                                  std::string_view{text.data(), static_cast<std::size_t>(len)});
+    }
+
     void reboot_outlet(const context &ctx, std::size_t outletIndex)
     {
         if (!outlet_relay_on(ctx, outletIndex))
@@ -441,6 +495,8 @@ namespace sms_commands
         return device_status::make_snapshot(ctx.modemInformation,
                                             ctx.relays,
                                             ctx.measurements,
+                                            ctx.monitoredLoadConnected,
+                                            ctx.monitoredLoadStateValid,
                                             ctx.bootTimeMs,
                                             ctx.heartBeatDaysMilli,
                                             ctx.batteryMillivolts);
@@ -769,13 +825,110 @@ namespace sms_commands
         send_status(ctx, sender);
     }
 
-    void handle_set_heart_beat_days(const context &,
+    void handle_set_heart_beat_days(const context &ctx,
                                     std::string_view sender,
-                                    std::string_view)
+                                    std::string_view body)
     {
         LOG_INF("SMS command SetHeartBeatDays from %.*s",
                 static_cast<int>(sender.size()),
                 sender.data());
+
+        uint32_t daysMilli = 0;
+        if (!parse_unsigned_decimal_scaled(command_argument(body),
+                                           1000,
+                                           0,
+                                           999999,
+                                           daysMilli))
+        {
+            send_command_ack(ctx, sender, "ERR SetHeartbeatDays value");
+            return;
+        }
+
+        const int ret = app_config::save_heartbeat_days_milli(daysMilli);
+        if (ret != 0)
+        {
+            send_command_ack(ctx, sender, "ERR SetHeartbeatDays save");
+            return;
+        }
+
+        ctx.heartBeatDaysMilli = daysMilli;
+        ctx.nextHeartbeatMs = device_status::next_heartbeat_uptime_ms(ctx.bootTimeMs,
+                                                                      daysMilli,
+                                                                      k_uptime_get());
+        send_threshold_ack(ctx, sender, "SetHeartbeatDays", daysMilli);
+    }
+
+    void handle_on_threshold(const context &ctx,
+                             std::string_view sender,
+                             std::string_view body)
+    {
+        uint32_t thresholdMw = 0;
+        if (!parse_unsigned_decimal_scaled(command_argument(body),
+                                           1000,
+                                           0,
+                                           20000000,
+                                           thresholdMw))
+        {
+            send_command_ack(ctx, sender, "ERR OnThreshold value");
+            return;
+        }
+
+        const int ret = app_config::save_on_threshold_mw(thresholdMw);
+        if (ret != 0)
+        {
+            send_command_ack(ctx, sender, "ERR OnThreshold range");
+            return;
+        }
+
+        send_threshold_ack(ctx, sender, "OnThreshold", thresholdMw);
+    }
+
+    void handle_off_threshold(const context &ctx,
+                              std::string_view sender,
+                              std::string_view body)
+    {
+        uint32_t thresholdMw = 0;
+        if (!parse_unsigned_decimal_scaled(command_argument(body),
+                                           1000,
+                                           0,
+                                           20000000,
+                                           thresholdMw))
+        {
+            send_command_ack(ctx, sender, "ERR OffThreshold value");
+            return;
+        }
+
+        const int ret = app_config::save_off_threshold_mw(thresholdMw);
+        if (ret != 0)
+        {
+            send_command_ack(ctx, sender, "ERR OffThreshold range");
+            return;
+        }
+
+        send_threshold_ack(ctx, sender, "OffThreshold", thresholdMw);
+    }
+
+    void handle_power_factor_alerts(const context &ctx,
+                                    std::string_view sender,
+                                    std::string_view body)
+    {
+        bool enabled = false;
+        if (!parse_on_off(command_argument(body), enabled))
+        {
+            send_command_ack(ctx, sender, "ERR PowerFactorAlerts value");
+            return;
+        }
+
+        const int ret = app_config::save_power_factor_alerts_enabled(enabled);
+        if (ret != 0)
+        {
+            send_command_ack(ctx, sender, "ERR PowerFactorAlerts save");
+            return;
+        }
+
+        send_command_ack(ctx,
+                         sender,
+                         enabled ? "OK PowerFactorAlerts=On" : "OK PowerFactorAlerts=Off");
     }
 
     void handle_device_on(const context &ctx,

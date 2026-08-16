@@ -4,31 +4,29 @@
 
 #include <zephyr/logging/log.h>
 
+#include "app_config.hpp"
+
 LOG_MODULE_REGISTER(alerts, LOG_LEVEL_INF);
 
 namespace alerts
 {
     void devicePowerMonitor::outletTracker::reset()
     {
-        currentMa.fill(0);
         activePowerMw.fill(0);
         nextSample = 0;
         sampleCount = 0;
-        currentSum = 0;
         activePowerSum = 0;
         lastState = state::Unknown;
         candidateState = state::Unknown;
         candidateCount = 0;
     }
 
-    void devicePowerMonitor::outletTracker::add(int32_t current, int32_t activePower)
+    void devicePowerMonitor::outletTracker::add(int32_t activePower)
     {
-        const int32_t normalizedCurrent = current > 0 ? current : 0;
         const int32_t normalizedPower = activePower > 0 ? activePower : 0;
 
         if (sampleCount == sampleWindow)
         {
-            currentSum -= currentMa[nextSample];
             activePowerSum -= activePowerMw[nextSample];
         }
         else
@@ -36,9 +34,7 @@ namespace alerts
             sampleCount++;
         }
 
-        currentMa[nextSample] = normalizedCurrent;
         activePowerMw[nextSample] = normalizedPower;
-        currentSum += normalizedCurrent;
         activePowerSum += normalizedPower;
         nextSample = (nextSample + 1U) % sampleWindow;
     }
@@ -46,11 +42,6 @@ namespace alerts
     bool devicePowerMonitor::outletTracker::ready() const
     {
         return sampleCount == sampleWindow;
-    }
-
-    int32_t devicePowerMonitor::outletTracker::average_current_ma() const
-    {
-        return sampleCount == 0 ? 0 : static_cast<int32_t>(currentSum / sampleCount);
     }
 
     int32_t devicePowerMonitor::outletTracker::average_active_power_mw() const
@@ -114,9 +105,11 @@ namespace alerts
     {
         if (!device_status::utility_on(ctx.measurements))
         {
-            for (outletTracker &outlet : outlets_)
+            for (std::size_t i = 0; i < outlets_.size(); ++i)
             {
-                outlet.reset();
+                outlets_[i].reset();
+                ctx.monitoredLoadConnected[i] = false;
+                ctx.monitoredLoadStateValid[i] = false;
             }
             return false;
         }
@@ -136,39 +129,44 @@ namespace alerts
             if (!relayOn)
             {
                 outlets_[i].reset();
+                ctx.monitoredLoadConnected[i] = false;
+                ctx.monitoredLoadStateValid[i] = true;
                 continue;
             }
 
             outletTracker &outlet = outlets_[i];
-            outlet.add(ctx.measurements[i].mA, ctx.measurements[i].mW);
+            if (outlet.lastState == state::Unknown && outlet.sampleCount == 0)
+            {
+                ctx.monitoredLoadStateValid[i] = false;
+            }
+            outlet.add(ctx.measurements[i].mW);
 
             if (!outlet.ready())
             {
                 continue;
             }
 
-            const int32_t averageCurrentMa = outlet.average_current_ma();
             const int32_t averageActivePowerMw = outlet.average_active_power_mw();
 
             if (outlet.lastState == state::Unknown)
             {
                 outlet.lastState =
-                    device_status::outlet_load_connected(averageCurrentMa, averageActivePowerMw)
+                    averageActivePowerMw >= static_cast<int32_t>(app_config::startupThresholdMw)
                         ? state::Connected
                         : state::Disconnected;
+                ctx.monitoredLoadConnected[i] = outlet.lastState == state::Connected;
+                ctx.monitoredLoadStateValid[i] = true;
                 continue;
             }
 
             state candidate = state::Unknown;
             if (outlet.lastState == state::Connected &&
-                device_status::outlet_load_clearly_disconnected(averageCurrentMa,
-                                                                averageActivePowerMw))
+                averageActivePowerMw < static_cast<int32_t>(app_config::off_threshold_mw()))
             {
                 candidate = state::Disconnected;
             }
             else if (outlet.lastState == state::Disconnected &&
-                     device_status::outlet_load_connected(averageCurrentMa,
-                                                          averageActivePowerMw))
+                     averageActivePowerMw > static_cast<int32_t>(app_config::on_threshold_mw()))
             {
                 candidate = state::Connected;
             }
@@ -201,6 +199,8 @@ namespace alerts
             if (sent)
             {
                 outlet.lastState = candidate;
+                ctx.monitoredLoadConnected[i] = candidate == state::Connected;
+                ctx.monitoredLoadStateValid[i] = true;
                 outlet.candidateState = state::Unknown;
                 outlet.candidateCount = 0;
                 anySent = true;
@@ -277,6 +277,7 @@ namespace alerts
     {
         if (!device_status::utility_on(ctx.measurements))
         {
+            reset();
             return false;
         }
 
@@ -284,6 +285,19 @@ namespace alerts
 
         for (std::size_t i = 0; i < device_status::outletCount; ++i)
         {
+            const bool relayOn =
+                i < ctx.relays.size() &&
+                ctx.relays[i] != nullptr &&
+                device_status::outlet_on(*ctx.relays[i]);
+            const bool loadConnected = ctx.monitoredLoadStateValid[i]
+                                           ? ctx.monitoredLoadConnected[i]
+                                           : device_status::outlet_load_connected(ctx.measurements[i]);
+            if (!relayOn || !loadConnected)
+            {
+                lastState_[i] = state::Unknown;
+                continue;
+            }
+
             const bool bad = device_status::power_factor_bad(ctx.measurements[i]);
             const bool restored = device_status::power_factor_restored(ctx.measurements[i]);
 
@@ -336,6 +350,11 @@ namespace alerts
         }
 
         return anySent;
+    }
+
+    void powerFactorMonitor::reset()
+    {
+        lastState_.fill(state::Unknown);
     }
 
 }

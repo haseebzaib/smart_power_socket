@@ -4,13 +4,11 @@
 
 #include <zephyr/kernel.h>
 
+#include "app_config.hpp"
+
 namespace device_status
 {
     static constexpr int32_t utilityVoltagePresentThresholdMv = 50000;
-    static constexpr int32_t outletLoadPresentThresholdMa = 5;
-    static constexpr int32_t outletLoadPresentThresholdMw = 500;
-    static constexpr int32_t outletLoadAbsentThresholdMa = 3;
-    static constexpr int32_t outletLoadAbsentThresholdMw = 300;
     static constexpr int32_t frequencyLowBadCentihz = 5800;
     static constexpr int32_t frequencyHighBadCentihz = 6100;
     static constexpr int32_t powerFactorBadCenti = 80;
@@ -47,25 +45,9 @@ namespace device_status
 
     bool outlet_load_connected(const sensors::hlw811x::measurements &measurement)
     {
-        return outlet_load_connected(measurement.mA, measurement.mW);
-    }
-
-    bool outlet_load_connected(int32_t currentMa, int32_t activePowerMw)
-    {
-        // Both signals must indicate a real load. At an open outlet the RMS
-        // current channel can hover around its threshold while active power
-        // remains at zero.
-        return abs_i32(currentMa) >= outletLoadPresentThresholdMa &&
-               activePowerMw >= outletLoadPresentThresholdMw;
-    }
-
-    bool outlet_load_clearly_disconnected(int32_t currentMa, int32_t activePowerMw)
-    {
-        // Lower release thresholds provide hysteresis. Since a connected load
-        // requires both signals, either signal falling clearly below its
-        // release threshold is enough to indicate loss.
-        return abs_i32(currentMa) < outletLoadAbsentThresholdMa ||
-               activePowerMw < outletLoadAbsentThresholdMw;
+        // Used only when no monitored state exists yet. Runtime transitions
+        // use the configurable hysteresis thresholds in devicePowerMonitor.
+        return measurement.mW >= static_cast<int32_t>(app_config::startupThresholdMw);
     }
 
     bool average_frequency_centihz(std::span<const sensors::hlw811x::measurements, outletCount> measurements,
@@ -100,14 +82,12 @@ namespace device_status
 
     bool power_factor_bad(const sensors::hlw811x::measurements &measurement)
     {
-        return outlet_load_connected(measurement) &&
-               abs_i32(measurement.pF) < powerFactorBadCenti;
+        return abs_i32(measurement.pF) < powerFactorBadCenti;
     }
 
     bool power_factor_restored(const sensors::hlw811x::measurements &measurement)
     {
-        return !outlet_load_connected(measurement) ||
-               abs_i32(measurement.pF) >= powerFactorRestoredCenti;
+        return abs_i32(measurement.pF) >= powerFactorRestoredCenti;
     }
 
     uint32_t uptime_days_milli(int64_t bootTimeMs)
@@ -121,9 +101,31 @@ namespace device_status
         return static_cast<uint32_t>((elapsedMs * 1000LL) / millisecondsPerDay);
     }
 
+    int64_t heartbeat_interval_ms(uint32_t heartBeatDaysMilli)
+    {
+        return static_cast<int64_t>(heartBeatDaysMilli) * (millisecondsPerDay / 1000LL);
+    }
+
+    int64_t next_heartbeat_uptime_ms(int64_t bootTimeMs,
+                                     uint32_t heartBeatDaysMilli,
+                                     int64_t nowMs)
+    {
+        const int64_t intervalMs = heartbeat_interval_ms(heartBeatDaysMilli);
+        if (intervalMs <= 0)
+        {
+            return 0;
+        }
+
+        const int64_t elapsedMs = nowMs > bootTimeMs ? nowMs - bootTimeMs : 0;
+        const int64_t completedIntervals = elapsedMs / intervalMs;
+        return bootTimeMs + (completedIntervals + 1LL) * intervalMs;
+    }
+
     snapshot make_snapshot(const cellular::sim7080::modemInformation &modemInformation,
                            std::span<hardware::gpioCon *, outletCount> relays,
                            std::span<const sensors::hlw811x::measurements, outletCount> measurements,
+                           std::span<const bool, outletCount> monitoredLoadConnected,
+                           std::span<const bool, outletCount> monitoredLoadStateValid,
                            int64_t bootTimeMs,
                            uint32_t heartBeatDaysMilli,
                            uint32_t batteryMillivolts)
@@ -141,7 +143,9 @@ namespace device_status
         for (std::size_t i = 0; i < outletCount; ++i)
         {
             status.outletOn[i] = relays[i] != nullptr && outlet_on(*relays[i]);
-            status.outletLoadConnected[i] = outlet_load_connected(measurements[i]);
+            status.outletLoadConnected[i] = monitoredLoadStateValid[i]
+                                                ? monitoredLoadConnected[i]
+                                                : outlet_load_connected(measurements[i]);
             status.outletMeasurements[i] = measurements[i];
         }
 

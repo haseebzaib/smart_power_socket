@@ -55,6 +55,8 @@ std::array<int, 4> energyMeterErr;
 std::array<int64_t, 4> nextEnergyMeterRetryMs;
 
 std::array<sensors::hlw811x::measurements, 4> acMeasurements;
+std::array<bool, device_status::outletCount> monitoredLoadConnected{};
+std::array<bool, device_status::outletCount> monitoredLoadStateValid{};
 std::array<hardware::gpioCon *, device_status::outletCount> outletRelays = {{
 	&relay1,
 	&relay2,
@@ -84,6 +86,10 @@ int main(void)
 	const int64_t bootTimeMs = k_uptime_get();
 	const int appConfigRet = app_config::init();
 	LOG_INF("App config init ret: %d", appConfigRet);
+	heartBeatDaysMilli = app_config::heartbeat_days_milli();
+	int64_t nextHeartbeatMs = device_status::next_heartbeat_uptime_ms(bootTimeMs,
+													 heartBeatDaysMilli,
+													 k_uptime_get());
 
 	utilityPwrLed.init();
 	cellularLed.init();
@@ -229,8 +235,11 @@ int main(void)
 			.meterPga = &baselinePga,
 			.relays = std::span<hardware::gpioCon *, device_status::outletCount>{outletRelays},
 			.measurements = std::span<const sensors::hlw811x::measurements, device_status::outletCount>{acMeasurements},
+			.monitoredLoadConnected = std::span<bool, device_status::outletCount>{monitoredLoadConnected},
+			.monitoredLoadStateValid = std::span<bool, device_status::outletCount>{monitoredLoadStateValid},
 			.bootTimeMs = bootTimeMs,
 			.heartBeatDaysMilli = heartBeatDaysMilli,
+			.nextHeartbeatMs = nextHeartbeatMs,
 			.batteryMillivolts = batteryMillivolts,
 		};
 
@@ -252,7 +261,28 @@ int main(void)
 			utilityPowerAlerts.process(smsContext, alert_number);
 			devicePowerAlerts.process(smsContext, alert_number);
 			frequencyAlerts.process(smsContext, alert_number);
-			//powerFactorAlerts.process(smsContext, alert_number);
+			if (app_config::power_factor_alerts_enabled())
+			{
+				powerFactorAlerts.process(smsContext, alert_number);
+			}
+			else
+			{
+				powerFactorAlerts.reset();
+			}
+		}
+
+		if (startupStatusSent &&
+			sms_network_ready(sim7080Information) &&
+			heartBeatDaysMilli > 0U &&
+			nextHeartbeatMs > 0 &&
+			k_uptime_get() >= nextHeartbeatMs)
+		{
+			if (sms_commands::send_status(smsContext, alert_number, "SPS Heartbeat"))
+			{
+				nextHeartbeatMs = device_status::next_heartbeat_uptime_ms(bootTimeMs,
+														 heartBeatDaysMilli,
+														 k_uptime_get());
+			}
 		}
 
 		if (sim7080Information.smsReceived)

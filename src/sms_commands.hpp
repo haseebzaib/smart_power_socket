@@ -21,8 +21,11 @@ namespace sms_commands
         const hlw811x_pga *meterPga;
         std::span<hardware::gpioCon *, device_status::outletCount> relays;
         std::span<const sensors::hlw811x::measurements, device_status::outletCount> measurements;
+        std::span<bool, device_status::outletCount> monitoredLoadConnected;
+        std::span<bool, device_status::outletCount> monitoredLoadStateValid;
         int64_t bootTimeMs;
         uint32_t &heartBeatDaysMilli;
+        int64_t &nextHeartbeatMs;
         uint32_t batteryMillivolts;
     };
 
