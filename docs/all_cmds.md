@@ -206,6 +206,7 @@ OK OffThreshold=0.700
 Read the currently active values:
 
 ```text
+GetThresholds
 GetOnThreshold
 GetOffThreshold
 ```
@@ -213,6 +214,9 @@ GetOffThreshold
 Responses:
 
 ```text
+OnThreshold=1.200
+OffThreshold=0.700
+
 OnThreshold=1.200
 OffThreshold=0.700
 ```

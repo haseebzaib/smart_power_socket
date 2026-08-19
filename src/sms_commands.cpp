@@ -60,11 +60,14 @@ namespace sms_commands
     void handle_get_off_threshold(const context &ctx,
                                   std::string_view sender,
                                   std::string_view body);
+    void handle_get_thresholds(const context &ctx,
+                               std::string_view sender,
+                               std::string_view body);
     void handle_power_factor_alerts(const context &ctx,
                                     std::string_view sender,
                                     std::string_view body);
 
-    constexpr std::array<commandDefinition, 15> commands = {{
+    constexpr std::array<commandDefinition, 16> commands = {{
         {"getStatus", handle_get_status},
         {"SetHeartBeatDays", handle_set_heart_beat_days},
         {"DeviceOn", handle_device_on},
@@ -79,6 +82,7 @@ namespace sms_commands
         {"OffThreshold", handle_off_threshold},
         {"GetOnThreshold", handle_get_on_threshold},
         {"GetOffThreshold", handle_get_off_threshold},
+        {"GetThresholds", handle_get_thresholds},
         {"PowerFactorAlerts", handle_power_factor_alerts},
     }};
 
@@ -938,6 +942,30 @@ namespace sms_commands
                              "OffThreshold",
                              app_config::off_threshold_mw(),
                              false);
+    }
+
+    void handle_get_thresholds(const context &ctx,
+                               std::string_view sender,
+                               std::string_view)
+    {
+        const uint32_t onThresholdMw = app_config::on_threshold_mw();
+        const uint32_t offThresholdMw = app_config::off_threshold_mw();
+        std::array<char, 64> text{};
+        const int len = std::snprintf(text.data(),
+                                      text.size(),
+                                      "OnThreshold=%u.%03u\n"
+                                      "OffThreshold=%u.%03u",
+                                      static_cast<unsigned int>(onThresholdMw / 1000U),
+                                      static_cast<unsigned int>(onThresholdMw % 1000U),
+                                      static_cast<unsigned int>(offThresholdMw / 1000U),
+                                      static_cast<unsigned int>(offThresholdMw % 1000U));
+        if (len <= 0 || static_cast<std::size_t>(len) >= text.size())
+        {
+            return;
+        }
+
+        ctx.modem.send_sms(sender,
+                           std::string_view{text.data(), static_cast<std::size_t>(len)});
     }
 
     void handle_power_factor_alerts(const context &ctx,
