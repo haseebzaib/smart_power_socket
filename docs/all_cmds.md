@@ -203,6 +203,20 @@ OK OnThreshold=1.200
 OK OffThreshold=0.700
 ```
 
+Read the currently active values:
+
+```text
+GetOnThreshold
+GetOffThreshold
+```
+
+Responses:
+
+```text
+OnThreshold=1.200
+OffThreshold=0.700
+```
+
 `OffThreshold` must be lower than `OnThreshold`; invalid values return an error.
 
 ## Power Factor Alert Setting

@@ -54,11 +54,17 @@ namespace sms_commands
     void handle_off_threshold(const context &ctx,
                               std::string_view sender,
                               std::string_view body);
+    void handle_get_on_threshold(const context &ctx,
+                                 std::string_view sender,
+                                 std::string_view body);
+    void handle_get_off_threshold(const context &ctx,
+                                  std::string_view sender,
+                                  std::string_view body);
     void handle_power_factor_alerts(const context &ctx,
                                     std::string_view sender,
                                     std::string_view body);
 
-    constexpr std::array<commandDefinition, 13> commands = {{
+    constexpr std::array<commandDefinition, 15> commands = {{
         {"getStatus", handle_get_status},
         {"SetHeartBeatDays", handle_set_heart_beat_days},
         {"DeviceOn", handle_device_on},
@@ -71,6 +77,8 @@ namespace sms_commands
         {"CalibrateOutlet", handle_run_calibration},
         {"OnThreshold", handle_on_threshold},
         {"OffThreshold", handle_off_threshold},
+        {"GetOnThreshold", handle_get_on_threshold},
+        {"GetOffThreshold", handle_get_off_threshold},
         {"PowerFactorAlerts", handle_power_factor_alerts},
     }};
 
@@ -440,19 +448,21 @@ namespace sms_commands
         return ctx.modem.send_sms(recipient, text);
     }
 
-    bool send_threshold_ack(const context &ctx,
-                            std::string_view recipient,
-                            std::string_view name,
-                            uint32_t thresholdMw)
+    bool send_decimal_setting(const context &ctx,
+                              std::string_view recipient,
+                              std::string_view name,
+                              uint32_t valueMilli,
+                              bool acknowledgement)
     {
         std::array<char, 64> text{};
         const int len = std::snprintf(text.data(),
                                       text.size(),
-                                      "OK %.*s=%u.%03u",
+                                      "%s%.*s=%u.%03u",
+                                      acknowledgement ? "OK " : "",
                                       static_cast<int>(name.size()),
                                       name.data(),
-                                      static_cast<unsigned int>(thresholdMw / 1000U),
-                                      static_cast<unsigned int>(thresholdMw % 1000U));
+                                      static_cast<unsigned int>(valueMilli / 1000U),
+                                      static_cast<unsigned int>(valueMilli % 1000U));
         if (len <= 0 || static_cast<std::size_t>(len) >= text.size())
         {
             return false;
@@ -855,7 +865,7 @@ namespace sms_commands
         ctx.nextHeartbeatMs = device_status::next_heartbeat_uptime_ms(ctx.bootTimeMs,
                                                                       daysMilli,
                                                                       k_uptime_get());
-        send_threshold_ack(ctx, sender, "SetHeartbeatDays", daysMilli);
+        send_decimal_setting(ctx, sender, "SetHeartbeatDays", daysMilli, true);
     }
 
     void handle_on_threshold(const context &ctx,
@@ -880,7 +890,7 @@ namespace sms_commands
             return;
         }
 
-        send_threshold_ack(ctx, sender, "OnThreshold", thresholdMw);
+        send_decimal_setting(ctx, sender, "OnThreshold", thresholdMw, true);
     }
 
     void handle_off_threshold(const context &ctx,
@@ -905,7 +915,29 @@ namespace sms_commands
             return;
         }
 
-        send_threshold_ack(ctx, sender, "OffThreshold", thresholdMw);
+        send_decimal_setting(ctx, sender, "OffThreshold", thresholdMw, true);
+    }
+
+    void handle_get_on_threshold(const context &ctx,
+                                 std::string_view sender,
+                                 std::string_view)
+    {
+        send_decimal_setting(ctx,
+                             sender,
+                             "OnThreshold",
+                             app_config::on_threshold_mw(),
+                             false);
+    }
+
+    void handle_get_off_threshold(const context &ctx,
+                                  std::string_view sender,
+                                  std::string_view)
+    {
+        send_decimal_setting(ctx,
+                             sender,
+                             "OffThreshold",
+                             app_config::off_threshold_mw(),
+                             false);
     }
 
     void handle_power_factor_alerts(const context &ctx,
