@@ -268,6 +268,33 @@ HBD=0.000</pre></td>
     </tr>
   </table>
 
+  <h2>Utility Power Lost — Fuse Probably Blown</h2>
+  <p>When input AC is detected on FUSE_DETECTION (P1.12), but all socket metering
+  channels are below 50 V for three consecutive network-ready alert polls, the
+  utility-loss message includes a probable fuse fault. The optocoupler input is
+  active-low and sampled over up to 40 ms to detect AC pulses. This assumes the
+  optocoupler measures before the fuse and the meters measure after it.</p>
+  <table>
+    <tr><th>Output</th></tr>
+    <tr><td><pre>Alert=Utility power lost - fuse probably blown
+Utility=OFF
+Device=0110
+Outlet=1111
+RSL=-101
+Batt=4.44
+Lat=42.027998
+Lon=-91.631620
+FW=001.00
+HBD=0.000</pre></td></tr>
+  </table>
+  <p>No incoming command is required and no outlet report follows this alert.
+  Without detected input AC, the normal utility-loss alert remains. If input AC
+  returns during an outage but socket voltage does not, this alert follows after
+  confirmation. A metering fault or another downstream interruption can also
+  cause these symptoms. Failed sends are retried; a successful fuse alert is
+  sent once until socket voltage returns, when the existing restoration alert
+  and outlet report follow.</p>
+
   <h2>Utility Power Restored Alert</h2>
   <table>
     <tr><th>Output SMS 1</th><th>Output SMS 2</th></tr>

@@ -16,12 +16,14 @@ Pin numbers below are BL54L15 module pads, not nRF54L15 QFN pins.
 | Signal | GPIO/function | Module pad |
 | --- | --- | --- |
 | GSM PWRKEY | P1.10 | 28 |
-| Cellular LED | P1.09 | 29 |
+| Future debug TX (unused) | P1.09 | 29 |
+| Cellular LED | P2.09 | 2 |
 | Relay 1 | P1.08 | 30 |
 | Relay 2 | P0.04 | 31 |
 | Relay 3 | P1.14 | 32 |
 | Relay 4 | P1.13 | 33 |
-| Utility LED | P1.12 | 34 |
+| Utility LED | P2.08 | 3 |
+| FUSE_DETECTION | P1.12 (active-low input) | 34 |
 | Battery voltage | P1.11 / AIN4 | 35 |
 | Energy mux A | P0.03 | 36 |
 | Energy mux B | P2.10 | 37 |
@@ -32,11 +34,11 @@ Pin numbers below are BL54L15 module pads, not nRF54L15 QFN pins.
 | MCU energy TXD | P0.00 / UART30 TX | 17 |
 | MCU energy RXD | P0.01 / UART30 RX | 18 |
 | FLASH CS | P2.05 | 12 |
-| FLASH CLK | P2.04 | 11 |
-| FLASH IO0 / SI | P2.01 | 10 |
-| FLASH IO1 / SO | P2.00 | 9 |
-| FLASH IO2 / WP# | P2.02 | 8 |
-| FLASH IO3 / RESET# | P2.03 | 13 |
+| FLASH CLK | P2.01 | 10 |
+| FLASH IO0 / SI | P2.02 | 8 |
+| FLASH IO1 / SO | P2.04 | 11 |
+| FLASH IO2 / WP# | P2.03 | 13 |
+| FLASH IO3 / RESET# | P2.00 | 9 |
 | SWDIO | Dedicated SWDIO | 5 |
 | SWDCLK | Dedicated SWDCLK | 6 |
 | SWO | P2.07 | 4 |
@@ -48,23 +50,53 @@ UART30 stays at 9600 baud, 8E1. The replacement pinctrl groups omit the
 DVK RTS/CTS pins so they cannot claim GSM RI/DTR or mux A.
 ADC channel 4 still selects AIN4 (P1.11), with 12-bit resolution and gain 1/4.
 
-## Flash wiring constraint
+## Fuse detection
 
-The schematic assigns FLASH_CLK to P2.04. Hardware SPIM00 has dedicated
-signals: SCK on P2.01, MOSI on P2.02, and MISO on P2.04.
-P2.04 cannot be used as its hardware clock pin. The overlay therefore disables
-the inherited SPIM00 flash and adds `zephyr,spi-bitbang` using the wiring above.
-This provides single-lane SPI at a requested 250 kHz; actual throughput is
-lower because GPIO operations add overhead. It does not enable quad SPI.
-FLASH_IO2/WP# is held high by a GPIO hog before flash initialization;
-FLASH_IO3/RESET# is managed by the SPI NOR driver. The external device is
-available as `DT_ALIAS(spi_flash)`.
+The user confirmed FUSE_DETECTION on P1.12, utility LED on P2.08, and
+cellular LED on P2.09. This updates the LED assignments from the earlier MCU
+image. The original `nrf54L15_sps.overlay` remains untouched.
 
-For hardware SPIM00 on a PCB revision, wire FLASH_CLK to P2.01,
-FLASH_IO0 to P2.02, FLASH_IO1 to P2.04, FLASH_IO2 to P2.03, and
-FLASH_IO3 to P2.00; FLASH_CS can stay on P2.05. Then replace the software
-SPI node with SPIM00 pinctrl and move the flash's reset/WP assignments.
-A successful firmware build does not validate electrical operation.
+FUSE_DETECTION is a GPIO input with active-low polarity: the LTV-814 pulls
+it low when AC is present; R78 (47 kohm) pulls it to 3.3 V when AC is absent.
+C19 (100 nF) supplies the shown 4.7 ms RC filter. No internal pull is enabled.
+Firmware looks for a low pulse over up to 40 ms, sampling about every 1 ms,
+so a sample near an AC zero crossing is not mistaken for an outage.
+
+The diagnosis assumes AC_IN is upstream of the fuse and metering is downstream.
+If all metering channels are below the existing 50 V detection threshold while
+input AC is detected for three consecutive network-ready alert polls, send
+`Alert=Utility power lost - fuse probably blown` with the existing utility-loss
+status fields. Actual delay depends on the main loop and modem operations.
+This is a suspected fault: metering failures or another downstream interruption
+can produce the same symptoms. With no detected input AC, the normal utility
+loss alert remains. When metered socket voltage returns, the existing utility
+restored alert and outlet report remain. Failed SMS sends are retried; a
+successful fuse alert is not repeated until metered power is restored.
+
+The GPIO is optional in firmware so the original overlay still works; without
+its alias, only the original utility-loss behavior is available. Input init/read
+errors are logged and do not establish input AC presence.
+
+See `all_cmds.md`, `sms_commands_client.html`, and the **Fuse Detection Alert**
+sheet in `SPS SMS Commands.xlsx` for the SMS behavior.
+
+## Flash wiring
+
+The confirmed pin list is the source for the overlay and table above.
+FLASH_CLK P2.01, FLASH_IO0/MOSI P2.02, and FLASH_IO1/MISO P2.04 match
+hardware SPIM00. The overlay enables SPIM00 with explicit default/sleep
+pinctrl and FLASH_CS on P2.05. The inherited MX25R6435F node provides the
+64 Mbit capacity, JEDEC ID, SFDP, and deep-power-down parameters; its SPI
+frequency is 8 MHz.
+
+This uses single-lane hardware SPI. FLASH_IO2/WP# on P2.03 is held high
+by a GPIO hog before flash initialization. FLASH_IO3/RESET# on P2.00 is
+managed by the SPI NOR driver. Quad SPI is not enabled. The external device
+is available as `DT_ALIAS(spi_flash)`.
+
+P1.09 is reserved for future debug TX and is not configured by firmware.
+SWDIO/SWDCLK use their dedicated pins; SWO is P2.07. Logging uses RTT,
+so firmware does not assign P1.09 or drive SWO for serial logging.
 
 Settings/NVS remain in internal RRAM through `pm_static.yml`.
 The firmware does not currently read or write application data to external

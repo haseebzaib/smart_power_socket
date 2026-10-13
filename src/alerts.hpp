@@ -21,8 +21,11 @@ namespace alerts
             Unknown,
             On,
             Off,
+            FuseSuspected,
         };
 
+        static constexpr uint8_t fuseConfirmationSamples = 3;
+        uint8_t fuseCandidateCount_ = 0;
         state lastState_ = state::Unknown;
     };
 

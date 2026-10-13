@@ -53,44 +53,24 @@ namespace alerts
     {
         const bool utilityOn = device_status::utility_on(ctx.measurements);
 
-        if (lastState_ == state::Unknown)
+        if (utilityOn)
         {
-            if (utilityOn)
+            fuseCandidateCount_ = 0;
+            if (lastState_ == state::Unknown)
             {
                 lastState_ = state::On;
                 return false;
             }
 
-            bool sent = sms_commands::send_alert(ctx,
-                                                 recipient,
-                                                 "Utility power lost",
-                                                 false);
-            if (sent)
+            if (lastState_ == state::On)
             {
-                lastState_ = state::Off;
+                return false;
             }
-            return sent;
-        }
 
-        if (lastState_ == state::On && !utilityOn)
-        {
-            bool sent = sms_commands::send_alert(ctx,
-                                                 recipient,
-                                                 "Utility power lost",
-                                                 false);
-            if (sent)
-            {
-                lastState_ = state::Off;
-            }
-            return sent;
-        }
-
-        if (lastState_ == state::Off && utilityOn)
-        {
-            bool sent = sms_commands::send_alert(ctx,
-                                                 recipient,
-                                                 "Utility power restored",
-                                                 true);
+            const bool sent = sms_commands::send_alert(ctx,
+                                                        recipient,
+                                                        "Utility power restored",
+                                                        true);
             if (sent)
             {
                 lastState_ = state::On;
@@ -98,7 +78,47 @@ namespace alerts
             return sent;
         }
 
-        return false;
+        // The optocoupler observes AC before the fuse; metering observes
+        // the sockets after it. Confirm the mismatch across multiple polls.
+        if (ctx.inputAcPresent)
+        {
+            if (fuseCandidateCount_ < fuseConfirmationSamples)
+            {
+                ++fuseCandidateCount_;
+            }
+            if (fuseCandidateCount_ < fuseConfirmationSamples ||
+                lastState_ == state::FuseSuspected)
+            {
+                return false;
+            }
+
+            const bool sent = sms_commands::send_alert(ctx,
+                                                        recipient,
+                                                        "Utility power lost - fuse probably blown",
+                                                        false);
+            if (sent)
+            {
+                lastState_ = state::FuseSuspected;
+            }
+            return sent;
+        }
+
+        fuseCandidateCount_ = 0;
+        if (lastState_ == state::Off || lastState_ == state::FuseSuspected)
+        {
+            // Do not repeat a loss SMS until socket voltage is restored.
+            return false;
+        }
+
+        const bool sent = sms_commands::send_alert(ctx,
+                                                    recipient,
+                                                    "Utility power lost",
+                                                    false);
+        if (sent)
+        {
+            lastState_ = state::Off;
+        }
+        return sent;
     }
 
     bool devicePowerMonitor::process(const sms_commands::context &ctx, std::string_view recipient)

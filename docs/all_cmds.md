@@ -282,6 +282,35 @@ HBD=0.000
 
 No individual outlet report is sent after utility lost.
 
+### Utility Power Lost — Fuse Probably Blown
+
+Sent when input AC is detected on `FUSE_DETECTION` (P1.12), but no metering
+channel detects socket voltage (all below 50 V), for three consecutive
+network-ready alert polls. The input is active-low and sampled over up to
+40 ms to catch AC pulses. AC_IN must be before the fuse and metering after it.
+
+```text
+Alert=Utility power lost - fuse probably blown
+Utility=OFF
+Device=0110
+Outlet=1111
+RSL=-101
+Batt=4.44
+Lat=42.027998
+Lon=-91.631620
+FW=001.00
+HBD=0.000
+```
+
+This extends the utility-loss alert; it does not add an incoming SMS command.
+No individual outlet report follows it. The diagnosis is probable because a
+metering fault or another downstream interruption can give the same readings.
+If input AC is absent or the sensor is unavailable, the normal loss alert is
+used. If input AC returns during an existing outage without socket voltage,
+the fuse alert is sent after confirmation. Failed sends are retried; a successful
+fuse alert is sent once until socket voltage returns. The existing restoration
+alert and outlet report then follow as before.
+
 ### Utility Power Restored
 
 Sent when utility AC returns.

@@ -27,6 +27,40 @@
 LOG_MODULE_REGISTER(mainCpp, LOG_LEVEL_INF);
 
 hardware::gpioCon utilityPwrLed(GPIO_DT_SPEC_GET(DT_ALIAS(utility_pwr_led), gpios), GPIO_OUTPUT_HIGH);
+#if DT_NODE_EXISTS(DT_ALIAS(fuse_detection))
+hardware::gpioCon fuseDetection(GPIO_DT_SPEC_GET(DT_ALIAS(fuse_detection), gpios), GPIO_INPUT);
+bool fuseDetectionReady = false;
+#endif
+
+bool input_ac_present()
+{
+#if DT_NODE_EXISTS(DT_ALIAS(fuse_detection))
+	if (!fuseDetectionReady)
+	{
+		return false;
+	}
+
+	// AC optocoupler output pulses low. Observe at least two 50 Hz cycles
+	// rather than treating a high sample near a zero crossing as no AC.
+	const int64_t deadlineMs = k_uptime_get() + 40;
+	do
+	{
+		const int value = fuseDetection.get();
+		if (value < 0)
+		{
+			LOG_ERR("Fuse detection GPIO read failed: %d", value);
+			return false;
+		}
+		if (value == 1) // GPIO_ACTIVE_LOW: a low level means input AC present.
+		{
+			return true;
+		}
+		k_msleep(1);
+	} while (k_uptime_get() < deadlineMs);
+#endif
+	return false;
+}
+
 hardware::gpioCon cellularLed(GPIO_DT_SPEC_GET(DT_ALIAS(cellular_led), gpios), GPIO_OUTPUT_HIGH);
 hardware::gpioCon relay1(GPIO_DT_SPEC_GET(DT_ALIAS(relay1), gpios), GPIO_OUTPUT_INACTIVE);
 hardware::gpioCon relay2(GPIO_DT_SPEC_GET(DT_ALIAS(relay2), gpios), GPIO_OUTPUT_INACTIVE);
@@ -92,6 +126,14 @@ int main(void)
 													 k_uptime_get());
 
 	utilityPwrLed.init();
+#if DT_NODE_EXISTS(DT_ALIAS(fuse_detection))
+	const int fuseDetectionRet = fuseDetection.init();
+	fuseDetectionReady = fuseDetectionRet == 0;
+	if (!fuseDetectionReady)
+	{
+		LOG_ERR("Fuse detection GPIO init failed: %d", fuseDetectionRet);
+	}
+#endif
 	cellularLed.init();
 	relay1.init();
 	relay2.init();
@@ -241,6 +283,7 @@ int main(void)
 			.heartBeatDaysMilli = heartBeatDaysMilli,
 			.nextHeartbeatMs = nextHeartbeatMs,
 			.batteryMillivolts = batteryMillivolts,
+			.inputAcPresent = input_ac_present(),
 		};
 
 		if (!startupStatusSent &&

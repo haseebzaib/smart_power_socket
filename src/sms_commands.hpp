@@ -27,6 +27,7 @@ namespace sms_commands
         uint32_t &heartBeatDaysMilli;
         int64_t &nextHeartbeatMs;
         uint32_t batteryMillivolts;
+        bool inputAcPresent = false;
     };
 
     void handle(const context &ctx);

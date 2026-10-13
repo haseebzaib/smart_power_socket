@@ -594,7 +594,7 @@ namespace sms_commands
     {
         device_status::snapshot status = make_status_snapshot(ctx);
 
-        std::array<char, 192> alertText{};
+        std::array<char, 256> alertText{};
         int alertLen = device_status::format_alert_message(status,
                                                            alert,
                                                            alertText.data(),
