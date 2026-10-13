@@ -51,71 +51,42 @@ Fields:
 
 ### `getcellularinfo`
 
-Requests fresh read-only cellular diagnostics and replies to the command sender.
-The command is case-insensitive and takes no arguments:
+Requests a fresh cellular summary and replies to the sender in **one SMS**, using
+plain field names and the compact SPA format. Case-insensitive; no arguments.
 
 ```text
 getcellularinfo
 ```
 
-The report is sent as separate, numbered SMS messages headed
-`CellularInfo part 1`, `CellularInfo part 2`, etc. Each message is at most 160
-characters. Long fields can continue in the next message; read the parts in
-number order. The number of parts depends on the modem's responses. If a send
-fails, transmission stops; resend the command to request a new complete report.
-
-Example reassembled report (illustrative values):
+Example:
 
 ```text
-CellularInfo
-Model=SIM7080G
-ModemFW=<modem firmware revision>
-IMEI=<15-digit modem IMEI>
-ICCID=<SIM ICCID>
-IMSI=<subscriber identity>
-Carrier=T-Mobile
-SIM=READY
-CREG=5
-CEREG=0,5
-CSQ=18,99
-RSL=-77
-COPS=0,0,"T-Mobile",7
-CNMP=38
-CMNB=1
+Cmd=GetCellularInfo
+IMEI=863866074042672
+ICCID=89882280666242663460
+Phone=NONE
+Netw=Roaming
+Carrier=AT&T
+RSL=-63
 APN=iot.1nce.net
-CNACT=0,1,"10.0.0.1"
-Lat=42.027998
-Lon=-91.631620
-CPSI=<raw serving-cell information>
 ```
 
-Fields:
+- `IMEI`: modem identity (up to 15 characters).
+- `ICCID`: SIM card identity (up to 20 characters).
+- `Phone`: `NONE`; the firmware does not currently query the SIM's phone number.
+- `Netw`: `Home`, `Roaming`, `Searching`, `Unregistered`, `Denied`, or `Unknown`.
+- `Carrier`: operator name (up to 24 characters).
+- `RSL`: signal estimate in dBm, or `Unknown` when unavailable.
+- `APN`: APN configured in the firmware.
 
-| Field | Meaning |
-| --- | --- |
-| `Model`, `ModemFW` | Actual modem model (`AT+GMM`) and firmware revision (`AT+CGMR`). |
-| `IMEI`, `ICCID`, `IMSI` | Modem, SIM card, and subscriber identities. |
-| `Carrier`, `COPS` | Operator name and raw operator selection/technology response. |
-| `SIM` | SIM PIN/readiness status. |
-| `CREG` | Registration status: 1 = home, 5 = roaming; other values indicate no confirmed registration. |
-| `CEREG` | Raw EPS/LTE registration response; the second value is registration status. |
-| `CSQ` | Raw RSSI index and BER code. `18,99` produces `RSL=-77`; BER 99 means unknown. |
-| `RSL` | CSQ-derived signal estimate in dBm; `Unknown` if unavailable or CSQ RSSI is 99. |
-| `CNMP`, `CMNB` | Raw preferred radio modes; 38 = LTE only, and CMNB 1 = CAT-M, 2 = NB-IoT, 3 = both. |
-| `APN` | APN configured in the firmware. |
-| `CNACT` | Fresh raw data-context activation states and IP addresses. |
-| `Lat`, `Lon` | Last location cached by the normal modem loop; not a fresh GPS fix from this command. |
-| `CPSI` | Raw serving-cell/system report: radio mode, network/cell/band, and LTE RSRQ/RSRP/RSSI/RSSNR when available. |
+The response is bounded to 160 characters, with no numbered parts or raw AT
+responses. Identity/PIN/carrier query failures may report `Error`, `Unknown`, or
+empty identities. It refreshes signal, registration, carrier and identities
+without changing the selected carrier or radio settings.
 
-Unsupported, failed, empty, or oversized diagnostic responses show `Unavailable`;
-existing identity/PIN/carrier queries may show `Error` or `Unknown`. Failed CSQ
-queries show `CSQ=-1,-1` and `RSL=Unknown`; a valid RSSI code of 99 also means
-signal unknown. Existing status/alert messages use `RSL=-1` as the unavailable
-sentinel, not a measured signal strength.
-
-The command does not switch carrier, radio mode, or activate a data connection.
-It makes multiple AT queries, so delivery can take time if queries time out.
-See [cellular signal diagnostics](Cellular_signal_diagnostics.md) for the −77 investigation.
+Raw signal responses and readable registration status are logged at INFO level.
+LTE registration and serving-cell responses are logged about every 30 seconds,
+including while searching. See [cellular signal diagnostics](Cellular_signal_diagnostics.md).
 
 ### `GetOutletData`
 

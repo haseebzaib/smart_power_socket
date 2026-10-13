@@ -69,21 +69,8 @@ namespace cellular
         int init();
         void loop(modemInformation &modemInfo);
 
-        struct cellularInformation
-        {
-            modemInformation modem;
-            std::array<char, 64> firmware{};
-            std::array<char, 25> imsi{};
-            std::array<char, 96> operatorInfo{};
-            std::array<char, 96> epsRegistration{};
-            std::array<char, 25> preferredMode{};
-            std::array<char, 25> catMode{};
-            std::array<char, 256> dataStatus{};
-            std::array<char, 256> systemInfo{};
-        };
-
-        // Read-only diagnostic queries; does not alter operator or radio settings.
-        void get_cellular_info(cellularInformation &info);
+        // Refresh the cellular fields used by the compact SMS response.
+        void get_cellular_info(modemInformation &info);
         static constexpr std::string_view apn = "iot.1nce.net";
 
         // Reads the oldest stored SMS into out, then deletes it from storage.
@@ -103,6 +90,7 @@ namespace cellular
 
         bool read_info(std::string_view command, std::string_view prefix,
                        std::span<char> output);
+        void log_network_diagnostics();
         void get_network_quality();
         void get_network();
         void get_model_identification();
@@ -202,6 +190,7 @@ namespace cellular
         atEngine atEngine_;
         hardware::gpioCon pwrKey_;
         hardware::gpioCon dtr_;
+        int64_t nextNetworkDiagnosticMs_ = 0;
         int64_t nextDataConnectionRetryMs_ = 0;
         int64_t nextSmsAttemptMs_ = 0;
         bool smsCooldownLogged_ = false;

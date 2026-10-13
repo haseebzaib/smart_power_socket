@@ -159,6 +159,7 @@ namespace cellular
         get_model_identification();
         get_pin_status();
         get_carrier();
+        log_network_diagnostics();
         get_imei();
         get_simId();
         // k_msleep(1000);
@@ -225,24 +226,41 @@ namespace cellular
         return valid;
     }
 
-    void sim7080::get_cellular_info(cellularInformation &info)
+    void sim7080::log_network_diagnostics()
+    {
+        if (k_uptime_get() < nextNetworkDiagnosticMs_)
+        {
+            return;
+        }
+        std::array<char, 256> response{};
+        if (read_info("AT+CEREG?\r\n", "+CEREG:", response))
+        {
+            LOG_INF("LTE registration response: %s", response.data());
+        }
+        else
+        {
+            LOG_WRN("LTE registration response unavailable");
+        }
+        if (read_info("AT+CPSI?\r\n", "+CPSI:", response))
+        {
+            LOG_INF("Serving cell response: %s", response.data());
+        }
+        else
+        {
+            LOG_WRN("Serving cell response unavailable");
+        }
+        nextNetworkDiagnosticMs_ = k_uptime_get() + 30000;
+    }
+
+    void sim7080::get_cellular_info(modemInformation &info)
     {
         get_network();
         get_network_quality();
-        get_model_identification();
         get_pin_status();
         get_carrier();
         get_imei();
         get_simId();
-        info.modem = modemInformation_;
-        read_info("AT+CGMR\r\n", "", info.firmware);
-        read_info("AT+CIMI\r\n", "", info.imsi);
-        read_info("AT+COPS?\r\n", "+COPS:", info.operatorInfo);
-        read_info("AT+CEREG?\r\n", "+CEREG:", info.epsRegistration);
-        read_info("AT+CNMP?\r\n", "+CNMP:", info.preferredMode);
-        read_info("AT+CMNB?\r\n", "+CMNB:", info.catMode);
-        read_info("AT+CNACT?\r\n", "+CNACT:", info.dataStatus);
-        read_info("AT+CPSI?\r\n", "+CPSI:", info.systemInfo);
+        info = modemInformation_;
     }
 
     void sim7080::get_network_quality()
@@ -264,6 +282,7 @@ namespace cellular
         if (atResponse_.result != cellular::atEngine::atResult::OK)
         {
             modemInformation_.networkQuality = -1;
+            LOG_WRN("Signal query failed (result=%d)", static_cast<int>(atResponse_.result));
             return;
         }
 
@@ -275,7 +294,7 @@ namespace cellular
 
         line = trim(line);
 
-        LOG_DBG("CSQ: Line Data %.*s",
+        LOG_INF("Signal response: %.*s",
                 static_cast<int>(line.size()),
                 line.data());
 
@@ -340,10 +359,16 @@ namespace cellular
             modemInformation_.signalValid = true;
         }
 
-        LOG_DBG("RSSI raw: %d, RSSI dBm: %d, BER: %d",
-                rssi,
-                modemInformation_.networkQuality,
-                ber);
+        if (modemInformation_.signalValid)
+        {
+            LOG_INF("Signal: %d dBm (raw RSSI=%d, BER=%d)",
+                    modemInformation_.networkQuality, rssi, ber);
+        }
+        else
+        {
+            LOG_INF("Signal unavailable: modem reports unknown (raw RSSI=%d, BER=%d)",
+                    rssi, ber);
+        }
     }
     void sim7080::get_network()
     {
@@ -426,7 +451,7 @@ namespace cellular
 
         if (stat >= 0 && stat < networkRegistrationStringCount)
         {
-            LOG_DBG("Network Status: %s", networkRegistrationString[stat]);
+            LOG_INF("Registration: %s (%d)", networkRegistrationString[stat], stat);
         }
         else
         {

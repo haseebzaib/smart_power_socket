@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <string_view>
 
 #include <zephyr/kernel.h>
@@ -838,72 +840,69 @@ namespace sms_commands
                                   std::string_view sender,
                                   std::string_view)
     {
-        cellular::sim7080::cellularInformation info{};
-        ctx.modem.get_cellular_info(info);
-        const auto &modem = info.modem;
+        cellular::sim7080::modemInformation modem{};
+        ctx.modem.get_cellular_info(modem);
+        const char *network = "Unknown";
+        switch (modem.networkRegistration)
+        {
+        case 0: network = "Offline"; break;
+        case 1: network = "Connected"; break;
+        case 2: network = "Searching"; break;
+        case 3: network = "Denied"; break;
+        case 5: network = "Roaming"; break;
+        default: break;
+        }
         std::array<char, 16> rsl{};
         if (modem.signalValid)
         {
-            std::snprintf(rsl.data(), rsl.size(), "%d", modem.networkQuality);
+            std::snprintf(rsl.data(), rsl.size(), "%d dBm", modem.networkQuality);
         }
         else
         {
             std::snprintf(rsl.data(), rsl.size(), "Unknown");
         }
 
-        std::array<char, 1536> report{};
-        const int length = std::snprintf(report.data(), report.size(),
-            "CellularInfo\nModel=%s\nModemFW=%s\nIMEI=%s\nICCID=%s\nIMSI=%s\n"
-            "Carrier=%s\nSIM=%s\nCREG=%d\nCEREG=%s\nCSQ=%d,%d\nRSL=%s\n"
-            "COPS=%s\nCNMP=%s\nCMNB=%s\nAPN=%s\nCNACT=%s\n"
-            "Lat=%s\nLon=%s\nCPSI=%s",
-            modem.modelIdentification.data(), info.firmware.data(),
-            modem.imei.data(), modem.simId.data(), info.imsi.data(),
-            modem.carrier.data(), modem.pin.data(), modem.networkRegistration,
-            info.epsRegistration.data(), modem.csqRssi, modem.csqBer, rsl.data(),
-            info.operatorInfo.data(), info.preferredMode.data(), info.catMode.data(),
-            cellular::sim7080::apn.data(), info.dataStatus.data(),
-            modem.latitude.data(), modem.longitude.data(), info.systemInfo.data());
-        if (length <= 0 || static_cast<std::size_t>(length) >= report.size())
+        const char *sim = "Unknown";
+        const std::string_view pin{modem.pinStatus.data()};
+        if (pin == "READY") sim = "Ready";
+        else if (pin.find("PIN") != std::string_view::npos ||
+                 pin.find("PUK") != std::string_view::npos) sim = "Locked";
+
+        // Fixed precision keeps complete coordinates in one SMS. Never show
+        // empty coordinates or silently truncate a numeric location.
+        auto coordinate = [](const char *value, double limit) {
+            std::array<char, 12> result{};
+            char *end = nullptr;
+            const double number = std::strtod(value, &end);
+            if (end != value && *end == '\0' && std::isfinite(number) &&
+                std::abs(number) <= limit)
+                std::snprintf(result.data(), result.size(), "%.6f", number);
+            else
+                std::snprintf(result.data(), result.size(), "Unknown");
+            return result;
+        };
+        const auto latitude = coordinate(modem.latitude.data(), 90.0);
+        const auto longitude = coordinate(modem.longitude.data(), 180.0);
+
+        // Nine useful fields, including location, fit in a single SMS even
+        // with maximum-length identities and negative coordinates.
+        std::array<char, 161> response{};
+        const int length = std::snprintf(response.data(), response.size(),
+            "Cellular\nCarrier=%.16s\nNetwork=%s\nSignal=%s\nSIM=%s\n"
+            "IMEI=%.15s\nICCID=%.20s\nLat=%s\nLon=%s",
+            modem.carrier[0] ? modem.carrier.data() : "Unknown", network,
+            rsl.data(), sim, modem.imei[0] ? modem.imei.data() : "Unknown",
+            modem.simId[0] ? modem.simId.data() : "Unknown",
+            latitude.data(), longitude.data());
+        if (length <= 0 || static_cast<std::size_t>(length) >= response.size())
         {
             send_command_ack(ctx, sender, "ERR getcellularinfo format");
             return;
         }
-
-        // The current modem send path uses single SMS submissions. Split the
-        // report explicitly, with numbered parts and at most 160 characters.
-        std::string_view remaining{report.data(), static_cast<std::size_t>(length)};
-        unsigned int part = 1;
-        while (!remaining.empty())
+        if (!ctx.modem.send_sms(sender, std::string_view{
+                response.data(), static_cast<std::size_t>(length)}))
         {
-            constexpr std::size_t payloadLimit = 135;
-            std::size_t count = std::min(remaining.size(), payloadLimit);
-            if (count < remaining.size())
-            {
-                const auto newline = remaining.rfind('\n', count);
-                if (newline != std::string_view::npos && newline > 0)
-                {
-                    count = newline;
-                }
-            }
-            std::array<char, 161> message{};
-            const int messageLength = std::snprintf(message.data(), message.size(),
-                "CellularInfo part %u\n%.*s", part,
-                static_cast<int>(count), remaining.data());
-            if (messageLength <= 0 ||
-                static_cast<std::size_t>(messageLength) >= message.size() ||
-                !ctx.modem.send_sms(sender, std::string_view{message.data(),
-                    static_cast<std::size_t>(messageLength)}))
-            {
-                LOG_WRN("getcellularinfo response stopped at part %u", part);
-                return;
-            }
-            remaining.remove_prefix(count);
-            if (!remaining.empty() && remaining.front() == '\n')
-            {
-                remaining.remove_prefix(1);
-            }
-            ++part;
+            LOG_WRN("getcellularinfo response failed");
         }
     }
 
