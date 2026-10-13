@@ -338,6 +338,24 @@ namespace app_config
 #endif
         LOG_INF("Settings storage: device=%s offset=0x%lx size=0x%lx", area->fa_dev->name,
                 static_cast<unsigned long>(area->fa_off), static_cast<unsigned long>(area->fa_size));
+        flash_pages_info page{};
+        ret = flash_get_page_info_by_offs(area->fa_dev, area->fa_off, &page);
+        if (ret != 0)
+        {
+            LOG_ERR("Settings flash layout query failed: %d", ret);
+            flash_area_close(area);
+            return ret;
+        }
+        const size_t sectorSize = page.size * CONFIG_SETTINGS_NVS_SECTOR_SIZE_MULT;
+        LOG_INF("Settings NVS layout: page=%u bytes sector=%u bytes configured sectors=%u",
+                static_cast<unsigned>(page.size), static_cast<unsigned>(sectorSize),
+                static_cast<unsigned>(CONFIG_SETTINGS_NVS_SECTOR_COUNT));
+        if (sectorSize > UINT16_MAX)
+        {
+            LOG_ERR("Settings sector exceeds NVS limit; include boards/bl54l15_dvk_nrf54l15_cpuapp.conf (4 KiB pages)");
+            flash_area_close(area);
+            return -EDOM;
+        }
         flash_area_close(area);
 #if FIXED_PARTITION_EXISTS(ota_image_a)
         log_reserved_partition(FIXED_PARTITION_ID(ota_image_a), "OTA image A");

@@ -55,6 +55,35 @@ Partition Manager. The existing `pm_static.yml` and
 Firmware checks that the selected settings area belongs to external flash
 on the new carrier and reports an error if an old partition map is selected.
 
+## Troubleshooting initialization error -33
+
+`-33` is `EDOM`. The NVS settings backend returns this when its sector size
+exceeds 65,535 bytes. SPI NOR defaults to a 65,536-byte page layout, so the
+board configuration's 4 KiB layout must be included.
+
+The inspected build cache selected `CONF_FILE=prj.conf` only. An explicit
+`CONF_FILE` bypasses automatic board-fragment selection. Set the application
+configuration files in the IDE to both files, or use this CMake argument in
+**your** pristine build configuration:
+
+```text
+-DCONF_FILE="prj.conf;boards/bl54l15_dvk_nrf54l15_cpuapp.conf"
+```
+
+Keep the existing board and overlay selection. After configuring, the generated
+application `zephyr/.config` should contain:
+
+```text
+CONFIG_SPI_NOR_FLASH_LAYOUT_PAGE_SIZE=4096
+CONFIG_SETTINGS_NVS_SECTOR_COUNT=16
+CONFIG_FLASH_JESD216_API=y
+```
+
+The new startup log reports page size, NVS sector size and configured sector
+count, with an explicit error if the sector is too large. The supplied failing
+log confirms the partition points to the external device, but does not establish
+successful settings initialization or persistence.
+
 ## Internal storage
 
 The former internal settings region at `0x15c000`, size `0x9000`, remains

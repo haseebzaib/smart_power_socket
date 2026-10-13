@@ -77,9 +77,16 @@ logging):
 
 ```text
 fuse_detection: AC available, freq ~60.00 Hz (pulse 120.00 Hz)
-fuse_detection: AC available, freq unavailable (no stable pulses)
+fuse_detection: AC available, freq unavailable (no active edges observed)
 fuse_detection: AC unavailable, freq unavailable
 ```
+
+When frequency is unavailable, a second line reports physical `raw` pin level,
+cumulative active `edges`, consecutive `valid_intervals` (up to eight), cumulative
+`rejected` intervals, `last_period_us`, and `edge_age_ms` (-1 before any edge).
+No edges means no active transition was captured; rejected intervals mean the
+observed spacing failed the 6-15 ms test. This distinguishes a steady input from
+intermittent pulses without calling either an inaccurate AC measurement.
 
 The RC filter may suppress zero-crossing edges and leave a steady low input.
 That still reports AC available, with frequency unavailable; the firmware does

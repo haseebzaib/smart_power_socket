@@ -38,6 +38,9 @@ namespace
 	std::array<uint32_t, 8> fusePeriodsUs{};
 	uint32_t fusePeriodSumUs = 0;
 	uint32_t fusePreviousCycle = 0;
+	uint32_t fuseEdgeCount = 0;
+	uint32_t fuseRejectedIntervals = 0;
+	uint32_t fuseLastPeriodUs = 0;
 	int64_t fuseLastEdgeMs = -1;
 	size_t fusePeriodCount = 0;
 	size_t fusePeriodIndex = 0;
@@ -50,6 +53,8 @@ namespace
 		const auto key = k_spin_lock(&fusePulseLock);
 		const uint32_t periodUs = static_cast<uint32_t>(
 			k_cyc_to_us_floor64(static_cast<uint32_t>(cycle - fusePreviousCycle)));
+		++fuseEdgeCount;
+		fuseLastPeriodUs = fuseLastEdgeMs >= 0 ? periodUs : 0;
 		// Two active pulses per mains cycle. Reject glitches and missing cycles;
 		// 6-15 ms covers the expected 50/60 Hz half-cycle interval.
 		if (fuseLastEdgeMs >= 0 && nowMs - fuseLastEdgeMs <= 40 &&
@@ -65,6 +70,7 @@ namespace
 		}
 		else
 		{
+			if (fuseLastEdgeMs >= 0) ++fuseRejectedIntervals;
 			fusePeriodCount = 0;
 			fusePeriodIndex = 0;
 			fusePeriodSumUs = 0;
@@ -82,6 +88,11 @@ namespace
 			fuseLastEdgeMs >= 0 && nowMs - fuseLastEdgeMs <= 40 && fusePeriodCount >= 3;
 		const uint32_t frequencyCentiHz = frequencyValid ?
 			static_cast<uint32_t>(50000000ULL * fusePeriodCount / fusePeriodSumUs) : 0;
+		const uint32_t edges = fuseEdgeCount;
+		const uint32_t rejected = fuseRejectedIntervals;
+		const uint32_t lastPeriodUs = fuseLastPeriodUs;
+		const unsigned validPeriods = static_cast<unsigned>(fusePeriodCount);
+		const int64_t lastEdgeAgeMs = fuseLastEdgeMs >= 0 ? nowMs - fuseLastEdgeMs : -1;
 		k_spin_unlock(&fusePulseLock, key);
 
 		static int64_t nextLogMs = 0;
@@ -96,7 +107,16 @@ namespace
 					frequencyCentiHz / 100U, frequencyCentiHz % 100U,
 					frequencyCentiHz * 2U / 100U, frequencyCentiHz * 2U % 100U);
 		else
-			LOG_INF("fuse_detection: AC available, freq unavailable (no stable pulses)");
+		{
+			const char *reason = !fuseFrequencyReady ? "pulse timing disabled" :
+				edges == 0 ? "no active edges observed" :
+				lastEdgeAgeMs > 40 ? "no recent active edges" : "insufficient valid intervals";
+			LOG_INF("fuse_detection: AC available, freq unavailable (%s)", reason);
+			LOG_INF("fuse_detection: raw=%d edges=%u valid_intervals=%u rejected=%u last_period_us=%u edge_age_ms=%lld",
+					gpio_pin_get_raw(fuseDetectionGpio.port, fuseDetectionGpio.pin),
+					edges, validPeriods, rejected, lastPeriodUs,
+					static_cast<long long>(lastEdgeAgeMs));
+		}
 		lastPresent = acPresent;
 		lastFrequencyValid = frequencyValid;
 		nextLogMs = nowMs + 10000;
