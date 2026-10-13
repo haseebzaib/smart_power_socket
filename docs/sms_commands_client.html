@@ -77,6 +77,54 @@ UpDays=0.123</pre></td>
     </tr>
   </table>
 
+  <h2>Get Cellular Info</h2>
+  <p>Send <code>getcellularinfo</code> (case-insensitive) to request fresh cellular
+  diagnostics. The response is sent in separate numbered messages headed
+  <code>CellularInfo part 1</code>, <code>CellularInfo part 2</code>, etc., each at
+  most 160 characters. Read parts in number order; a long field can continue in
+  the next part. If sending fails, the remaining parts stop; resend the command
+  for a new report.</p>
+  <table><tr><th>Send SMS</th><th>Illustrative reassembled report</th></tr>
+  <tr><td><pre>getcellularinfo</pre></td><td><pre>CellularInfo
+Model=SIM7080G
+ModemFW=&lt;modem firmware revision&gt;
+IMEI=&lt;15-digit modem IMEI&gt;
+ICCID=&lt;SIM ICCID&gt;
+IMSI=&lt;subscriber identity&gt;
+Carrier=T-Mobile
+SIM=READY
+CREG=5
+CEREG=0,5
+CSQ=18,99
+RSL=-77
+COPS=0,0,&quot;T-Mobile&quot;,7
+CNMP=38
+CMNB=1
+APN=iot.1nce.net
+CNACT=0,1,&quot;10.0.0.1&quot;
+Lat=42.027998
+Lon=-91.631620
+CPSI=&lt;raw serving-cell information&gt;</pre></td></tr></table>
+  <p>The report includes modem model/firmware, IMEI/ICCID/IMSI, carrier and SIM
+  readiness, registration, raw CSQ and converted RSL, operator/technology,
+  preferred radio modes, configured APN, live data-context states/IPs, cached
+  location, and raw serving-cell information.</p>
+  <p><code>CSQ=18,99</code> converts to <code>RSL=-77</code>. CSQ's first value is
+  the RSSI index; its second value is BER (99 means unknown). RSL is a
+  CSQ-derived dBm estimate. Failed CSQ queries show <code>CSQ=-1,-1</code> and
+  <code>RSL=Unknown</code>; RSSI code 99 also means unknown. Normal status and
+  alert messages use <code>RSL=-1</code> for unavailable signal.</p>
+  <p>CREG 1 means home registration and 5 means roaming. CEREG is the raw LTE
+  registration response. CNMP 38 means LTE only; CMNB 1 means CAT-M, 2 means
+  NB-IoT, and 3 means both. COPS, CNACT, and CPSI retain their modem field
+  order. CPSI includes serving-cell radio mode, network, cell, band, and LTE
+  signal metrics when available. Lat/Lon are cached, not a new GPS fix.</p>
+  <p>Failed or unsupported diagnostic queries show Unavailable; existing
+  identity/PIN/carrier queries may show Error or Unknown. The command makes
+  read-only queries and does not change carrier, radio modes, or data activation.
+  Timeouts may delay the reply. See <a href="Cellular_signal_diagnostics.md">the
+  RSL diagnostic notes</a> for interpreting a persistent −77 reading.</p>
+
   <h2>Outlet Data</h2>
   <table>
     <tr><th>Send SMS</th><th>Output</th></tr>

@@ -1,5 +1,6 @@
 #include "sms_commands.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdio>
@@ -67,8 +68,13 @@ namespace sms_commands
                                     std::string_view sender,
                                     std::string_view body);
 
-    constexpr std::array<commandDefinition, 16> commands = {{
+    void handle_get_cellular_info(const context &ctx,
+                                  std::string_view sender,
+                                  std::string_view body);
+
+    constexpr std::array<commandDefinition, 17> commands = {{
         {"getStatus", handle_get_status},
+        {"getcellularinfo", handle_get_cellular_info},
         {"SetHeartBeatDays", handle_set_heart_beat_days},
         {"DeviceOn", handle_device_on},
         {"DeviceOff", handle_device_off},
@@ -826,6 +832,79 @@ namespace sms_commands
 
         return ctx.modem.send_sms(recipient,
                                   std::string_view{alertText.data(), static_cast<std::size_t>(alertLen)});
+    }
+
+    void handle_get_cellular_info(const context &ctx,
+                                  std::string_view sender,
+                                  std::string_view)
+    {
+        cellular::sim7080::cellularInformation info{};
+        ctx.modem.get_cellular_info(info);
+        const auto &modem = info.modem;
+        std::array<char, 16> rsl{};
+        if (modem.signalValid)
+        {
+            std::snprintf(rsl.data(), rsl.size(), "%d", modem.networkQuality);
+        }
+        else
+        {
+            std::snprintf(rsl.data(), rsl.size(), "Unknown");
+        }
+
+        std::array<char, 1536> report{};
+        const int length = std::snprintf(report.data(), report.size(),
+            "CellularInfo\nModel=%s\nModemFW=%s\nIMEI=%s\nICCID=%s\nIMSI=%s\n"
+            "Carrier=%s\nSIM=%s\nCREG=%d\nCEREG=%s\nCSQ=%d,%d\nRSL=%s\n"
+            "COPS=%s\nCNMP=%s\nCMNB=%s\nAPN=%s\nCNACT=%s\n"
+            "Lat=%s\nLon=%s\nCPSI=%s",
+            modem.modelIdentification.data(), info.firmware.data(),
+            modem.imei.data(), modem.simId.data(), info.imsi.data(),
+            modem.carrier.data(), modem.pin.data(), modem.networkRegistration,
+            info.epsRegistration.data(), modem.csqRssi, modem.csqBer, rsl.data(),
+            info.operatorInfo.data(), info.preferredMode.data(), info.catMode.data(),
+            cellular::sim7080::apn.data(), info.dataStatus.data(),
+            modem.latitude.data(), modem.longitude.data(), info.systemInfo.data());
+        if (length <= 0 || static_cast<std::size_t>(length) >= report.size())
+        {
+            send_command_ack(ctx, sender, "ERR getcellularinfo format");
+            return;
+        }
+
+        // The current modem send path uses single SMS submissions. Split the
+        // report explicitly, with numbered parts and at most 160 characters.
+        std::string_view remaining{report.data(), static_cast<std::size_t>(length)};
+        unsigned int part = 1;
+        while (!remaining.empty())
+        {
+            constexpr std::size_t payloadLimit = 135;
+            std::size_t count = std::min(remaining.size(), payloadLimit);
+            if (count < remaining.size())
+            {
+                const auto newline = remaining.rfind('\n', count);
+                if (newline != std::string_view::npos && newline > 0)
+                {
+                    count = newline;
+                }
+            }
+            std::array<char, 161> message{};
+            const int messageLength = std::snprintf(message.data(), message.size(),
+                "CellularInfo part %u\n%.*s", part,
+                static_cast<int>(count), remaining.data());
+            if (messageLength <= 0 ||
+                static_cast<std::size_t>(messageLength) >= message.size() ||
+                !ctx.modem.send_sms(sender, std::string_view{message.data(),
+                    static_cast<std::size_t>(messageLength)}))
+            {
+                LOG_WRN("getcellularinfo response stopped at part %u", part);
+                return;
+            }
+            remaining.remove_prefix(count);
+            if (!remaining.empty() && remaining.front() == '\n')
+            {
+                remaining.remove_prefix(1);
+            }
+            ++part;
+        }
     }
 
     void handle_get_status(const context &ctx,

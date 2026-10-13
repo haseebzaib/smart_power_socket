@@ -42,7 +42,10 @@ namespace cellular
             std::array<char, 32> smsNumber;
             std::array<char, 300> smsBody;
             int8_t networkRegistration;
-            int8_t networkQuality;
+            int8_t networkQuality = -1;
+            int8_t csqRssi = -1;
+            int8_t csqBer = -1;
+            bool signalValid = false;
             int8_t dataConnected;
             int8_t smsReceived;
         };
@@ -66,6 +69,23 @@ namespace cellular
         int init();
         void loop(modemInformation &modemInfo);
 
+        struct cellularInformation
+        {
+            modemInformation modem;
+            std::array<char, 64> firmware{};
+            std::array<char, 25> imsi{};
+            std::array<char, 96> operatorInfo{};
+            std::array<char, 96> epsRegistration{};
+            std::array<char, 25> preferredMode{};
+            std::array<char, 25> catMode{};
+            std::array<char, 256> dataStatus{};
+            std::array<char, 256> systemInfo{};
+        };
+
+        // Read-only diagnostic queries; does not alter operator or radio settings.
+        void get_cellular_info(cellularInformation &info);
+        static constexpr std::string_view apn = "iot.1nce.net";
+
         // Reads the oldest stored SMS into out, then deletes it from storage.
         // Returns true if a message was read, false if the queue is empty.
         bool read_next_sms(smsMessage &out);
@@ -81,6 +101,8 @@ namespace cellular
         static constexpr std::size_t smsSingleMaxChars = 160;
         static constexpr std::size_t smsSegmentChars = 153;
 
+        bool read_info(std::string_view command, std::string_view prefix,
+                       std::span<char> output);
         void get_network_quality();
         void get_network();
         void get_model_identification();
@@ -127,7 +149,7 @@ namespace cellular
         bool parse_int(std::string_view text, int &value);
         int pwr_key_pulse();
 
-        static constexpr const char *pdpContext = "iot.1nce.net";
+        static constexpr const char *pdpContext = apn.data();
 
         /**set AT commands */
         const std::string_view atAT = "AT\r\n";

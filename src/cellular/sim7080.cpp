@@ -192,8 +192,66 @@ namespace cellular
         modemInfo = modemInformation_;
     }
 
+    bool sim7080::read_info(std::string_view command, std::string_view prefix,
+                            std::span<char> output)
+    {
+        std::fill(output.begin(), output.end(), '\0');
+        const auto response = atEngine_.send_command(
+            command, prefix, std::span<uint8_t>(data_.data(), data_.size()),
+            defaultCommandTimeoutMs);
+        std::string_view value = "Unavailable";
+        bool valid = false;
+        if (response.result == atEngine::atResult::OK && response.responseLength > 0)
+        {
+            auto line = trim(std::string_view{
+                reinterpret_cast<const char *>(data_.data()), response.responseLength});
+            if (prefix.empty() || line.starts_with(prefix))
+            {
+                if (!prefix.empty())
+                {
+                    line = trim(line.substr(prefix.size()));
+                }
+                if (!line.empty() && line.size() < output.size())
+                {
+                    value = line;
+                    valid = true;
+                }
+            }
+        }
+        if (value.size() < output.size())
+        {
+            std::copy(value.begin(), value.end(), output.begin());
+        }
+        return valid;
+    }
+
+    void sim7080::get_cellular_info(cellularInformation &info)
+    {
+        get_network();
+        get_network_quality();
+        get_model_identification();
+        get_pin_status();
+        get_carrier();
+        get_imei();
+        get_simId();
+        info.modem = modemInformation_;
+        read_info("AT+CGMR\r\n", "", info.firmware);
+        read_info("AT+CIMI\r\n", "", info.imsi);
+        read_info("AT+COPS?\r\n", "+COPS:", info.operatorInfo);
+        read_info("AT+CEREG?\r\n", "+CEREG:", info.epsRegistration);
+        read_info("AT+CNMP?\r\n", "+CNMP:", info.preferredMode);
+        read_info("AT+CMNB?\r\n", "+CMNB:", info.catMode);
+        read_info("AT+CNACT?\r\n", "+CNACT:", info.dataStatus);
+        read_info("AT+CPSI?\r\n", "+CPSI:", info.systemInfo);
+    }
+
     void sim7080::get_network_quality()
     {
+        // Invalidate each poll so a failed query cannot reuse an older signal.
+        modemInformation_.networkQuality = -1;
+        modemInformation_.csqRssi = -1;
+        modemInformation_.csqBer = -1;
+        modemInformation_.signalValid = false;
         cellular::atEngine::atResponse atResponse_;
         std::string_view prefix = "+CSQ:";
 
@@ -268,13 +326,18 @@ namespace cellular
             return;
         }
 
-        if (rssi >= 99)
+        if (!((rssi >= 0 && rssi <= 31) || rssi == 99) ||
+            !((ber >= 0 && ber <= 7) || ber == 99))
         {
-            modemInformation_.networkQuality = 0;
+            LOG_WRN("CSQ: invalid RSSI/BER values: %d,%d", rssi, ber);
+            return;
         }
-        else
+        modemInformation_.csqRssi = static_cast<int8_t>(rssi);
+        modemInformation_.csqBer = static_cast<int8_t>(ber);
+        if (rssi != 99)
         {
             modemInformation_.networkQuality = (2 * rssi) - 113;
+            modemInformation_.signalValid = true;
         }
 
         LOG_DBG("RSSI raw: %d, RSSI dBm: %d, BER: %d",
@@ -374,7 +437,7 @@ namespace cellular
     void sim7080::get_model_identification()
     {
 
-        copy_string_view_to_array("SIM7080_LTD", modemInformation_.modelIdentification);
+        read_info("AT+GMM\r\n", "", modemInformation_.modelIdentification);
     }
     void sim7080::get_pin_status()
     {
@@ -408,7 +471,7 @@ namespace cellular
         if (!line.starts_with(prefix))
         {
             LOG_ERR("CPIN: Prefix not found");
-            modemInformation_.networkQuality = -1;
+            copy_string_view_to_array("Error", modemInformation_.pin);
             return;
         }
 
