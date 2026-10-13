@@ -78,28 +78,34 @@ UpDays=0.123</pre></td>
   </table>
 
   <h2>Get Cellular Info</h2>
-  <p>Send <code>getcellularinfo</code> (case-insensitive, no arguments) to request
-  a fresh cellular summary. The response is one SMS, with no numbered parts or
-  raw modem commands.</p>
+  <p>Send <code>getcellularinfo</code> (case-insensitive, no arguments).
+  One SMS shows the main cellular information, including latitude and longitude.</p>
   <table><tr><th>Send SMS</th><th>Example response</th></tr>
-  <tr><td><pre>getcellularinfo</pre></td><td><pre>Cmd=GetCellularInfo
+  <tr><td><pre>getcellularinfo</pre></td><td><pre>Cellular
+Carrier=AT&amp;T
+Network=Roaming
+Signal=-63 dBm
+SIM=Ready
 IMEI=863866074042672
 ICCID=89882280666242663460
-Phone=NONE
-Netw=Roaming
-Carrier=AT&amp;T
-RSL=-63
-APN=iot.1nce.net</pre></td></tr></table>
-  <p>IMEI identifies the modem and ICCID identifies the SIM. Phone=NONE means the
-  firmware does not currently query the SIM phone number. Netw is Home, Roaming,
-  Searching, Unregistered, Denied, or Unknown. Carrier is the operator name;
-  RSL is the signal estimate in dBm, or Unknown when unavailable. APN is the
-  configured firmware APN. IMEI, ICCID and carrier are limited to 15, 20 and
-  24 characters respectively, keeping the reply within 160 characters.</p>
-  <p>Registration, signal, carrier and identities are refreshed without changing
-  network settings. Raw signal responses and readable registration status are
-  in the INFO logs; LTE registration and serving-cell details appear about every
-  30 seconds. See <a href="Cellular_signal_diagnostics.md">cellular diagnostics</a>.</p>
+Lat=42.056050
+Lon=-91.654126</pre></td></tr></table>
+  <p>Carrier is the mobile operator. Network is Connected, Roaming, Searching,
+  Offline, Denied or Unknown; both Connected and Roaming mean successful
+  registration. Signal is in dBm: a less negative number is stronger.
+  SIM is Ready, Locked or Unknown. IMEI identifies the modem; ICCID identifies
+  the SIM card. Carrier names are limited to 16 characters to keep one SMS.</p>
+  <p>Lat and Lon are a cellular location estimate in decimal degrees, not a GPS
+  fix. Both fields always appear. Unknown means a location was unavailable;
+  zero or an old position is never substituted. An active data connection is
+  needed to request the location, which can take up to 30 seconds.</p>
+  <p>The command refreshes cellular information without changing network
+  settings. Detailed modem responses remain in firmware logs for diagnostics.
+  See <a href="Cellular_signal_diagnostics.md">cellular diagnostics</a>.</p>
+  <p>On BL54L15, calibration and device settings are saved in external flash and
+  read back for verification. Internal settings storage is unused, with no
+  automatic migration.
+  See <a href="External_flash_storage.md">external flash storage</a>.</p>
 
   <h2>Outlet Data</h2>
   <table>

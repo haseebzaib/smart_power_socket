@@ -1,8 +1,11 @@
 # Cellular signal diagnostics
 
-`getcellularinfo` sends one compact SMS with IMEI, ICCID, Phone, Netw, Carrier,
-RSL, and APN. It uses the SPA format and omits raw modem response fields.
-Full command documentation is in `all_cmds.md` and `sms_commands_client.html`.
+`getcellularinfo` sends one SMS with Carrier, Network, Signal, SIM status,
+IMEI, ICCID, Lat and Lon. The response uses plain names and includes no raw
+modem commands. Location is requested when data is connected; unavailable
+coordinates appear as Unknown, never zero or a cached old position.
+The location is a cellular estimate, not a GPS fix. Full command documentation
+is in `all_cmds.md` and `sms_commands_client.html`.
 
 ## Findings from the supplied logs
 
@@ -54,7 +57,7 @@ are available even while unregistered, when SMS replies cannot be delivered.
 converted using `2 * code - 113`. Raw code 18 maps to -77 dBm; there is no -77
 constant or clamp. `networkQuality=-1` is the unavailable sentinel, not a
 measured -1 dBm signal. It does not control registration. The compact SMS uses
-`RSL=Unknown` instead of displaying the sentinel.
+`Signal=Unknown` instead of displaying the sentinel.
 
 Previously corrected issues remain: CSQ RSSI 99 no longer becomes 0 dBm, and
 CPIN prefix parsing errors no longer overwrite signal strength. The actual

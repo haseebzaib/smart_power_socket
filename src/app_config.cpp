@@ -1,9 +1,12 @@
 #include "app_config.hpp"
 
 #include <cerrno>
+#include <cstring>
 
+#include <zephyr/drivers/flash.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/settings/settings.h>
+#include <zephyr/storage/flash_map.h>
 
 LOG_MODULE_REGISTER(app_config, LOG_LEVEL_INF);
 
@@ -89,6 +92,51 @@ namespace app_config
         };
 
         bool settingsReady = false;
+        uint8_t loadedSettings = 0;
+
+        int save_setting(const char *key, const void *value, size_t size)
+        {
+            if (!settingsReady)
+            {
+                LOG_ERR("Settings save %s failed: storage unavailable", key);
+                return -ENODEV;
+            }
+            std::array<uint8_t, sizeof(calibrationStorage)> readback{};
+            static_assert(sizeof(relayStorage) <= sizeof(calibrationStorage));
+            static_assert(sizeof(alertStorage) <= sizeof(calibrationStorage));
+            static_assert(sizeof(heartbeatStorage) <= sizeof(calibrationStorage));
+            if (size > readback.size()) return -E2BIG;
+            int ret = settings_save_one(key, value, size);
+            if (ret != 0)
+            {
+                LOG_ERR("Settings save %s failed: %d", key, ret);
+                return ret;
+            }
+            const ssize_t length = settings_load_one(key, readback.data(), readback.size());
+            if (length != static_cast<ssize_t>(size) || std::memcmp(readback.data(), value, size))
+            {
+                ret = length < 0 ? static_cast<int>(length) : -EIO;
+                LOG_ERR("Settings readback %s failed: %d", key, ret);
+                return ret;
+            }
+            LOG_INF("Settings persisted and verified: %s (%u bytes)", key, static_cast<unsigned>(size));
+            return 0;
+        }
+
+        [[maybe_unused]] void log_reserved_partition(uint8_t id, const char *name)
+        {
+            const flash_area *area = nullptr;
+            const int ret = flash_area_open(id, &area);
+            if (ret != 0)
+            {
+                LOG_ERR("Reserved partition %s unavailable: %d", name, ret);
+                return;
+            }
+            LOG_INF("Reserved %s: device=%s offset=0x%lx size=0x%lx", name,
+                    area->fa_dev->name, static_cast<unsigned long>(area->fa_off),
+                    static_cast<unsigned long>(area->fa_size));
+            flash_area_close(area);
+        }
 
         bool valid_outlet(std::size_t outletIndex)
         {
@@ -180,6 +228,7 @@ namespace app_config
                 }
 
                 sanitize_calibration();
+                loadedSettings |= 1U;
                 return 0;
             }
 
@@ -197,6 +246,7 @@ namespace app_config
                 }
 
                 sanitize_relay_state();
+                loadedSettings |= 2U;
                 return 0;
             }
 
@@ -214,6 +264,7 @@ namespace app_config
                 }
 
                 sanitize_alert_settings();
+                loadedSettings |= 4U;
                 return 0;
             }
 
@@ -231,6 +282,7 @@ namespace app_config
                 }
 
                 sanitize_heartbeat_settings();
+                loadedSettings |= 8U;
                 return 0;
             }
 
@@ -245,11 +297,58 @@ namespace app_config
             .h_commit = nullptr,
             .h_export = nullptr,
         };
+
+
     }
 
     int init()
     {
-        int ret = settings_subsys_init();
+        const flash_area *area = nullptr;
+        int ret = flash_area_open(FIXED_PARTITION_ID(storage_partition), &area);
+        if (ret != 0)
+        {
+            LOG_ERR("Settings partition unavailable: %d", ret);
+            return ret;
+        }
+        if (!device_is_ready(area->fa_dev))
+        {
+            LOG_ERR("Settings flash %s is not ready", area->fa_dev->name);
+            flash_area_close(area);
+            return -ENODEV;
+        }
+#if DT_NODE_HAS_STATUS(DT_ALIAS(spi_flash), okay)
+        if (area->fa_dev != DEVICE_DT_GET(DT_ALIAS(spi_flash)))
+        {
+            LOG_ERR("Settings are not on external flash; check the BL54L15 partition configuration");
+            flash_area_close(area);
+            return -EINVAL;
+        }
+#if defined(CONFIG_FLASH_JESD216_API)
+        std::array<uint8_t, 3> jedec{};
+        ret = flash_read_jedec_id(area->fa_dev, jedec.data());
+        if (ret != 0 || jedec != std::array<uint8_t, 3>{0xc2, 0x28, 0x17})
+        {
+            LOG_ERR("External flash identity failed: ret=%d JEDEC=%02x %02x %02x", ret,
+                    jedec[0], jedec[1], jedec[2]);
+            flash_area_close(area);
+            return ret != 0 ? ret : -ENODEV;
+        }
+        LOG_INF("External flash: MX25R6435FZNIL0, JEDEC=c2 28 17, capacity=8388608 bytes (8 MiB)");
+#endif
+#endif
+        LOG_INF("Settings storage: device=%s offset=0x%lx size=0x%lx", area->fa_dev->name,
+                static_cast<unsigned long>(area->fa_off), static_cast<unsigned long>(area->fa_size));
+        flash_area_close(area);
+#if FIXED_PARTITION_EXISTS(ota_image_a)
+        log_reserved_partition(FIXED_PARTITION_ID(ota_image_a), "OTA image A");
+#endif
+#if FIXED_PARTITION_EXISTS(ota_image_b)
+        log_reserved_partition(FIXED_PARTITION_ID(ota_image_b), "OTA image B");
+#endif
+#if FIXED_PARTITION_EXISTS(data_storage)
+        log_reserved_partition(FIXED_PARTITION_ID(data_storage), "future data");
+#endif
+        ret = settings_subsys_init();
         if (ret != 0 && ret != -EALREADY)
         {
             LOG_ERR("settings init failed: %d", ret);
@@ -271,6 +370,8 @@ namespace app_config
         }
 
         settingsReady = true;
+        LOG_INF("Settings ready: loaded mask=0x%02x calibration mask=0x%02x",
+                static_cast<unsigned>(loadedSettings), static_cast<unsigned>(calibration.validMask));
         LOG_INF("config loaded: relay valid=%u mask=0x%02x, on=%u mW off=%u mW pf=%u hbd=%u",
                 static_cast<unsigned int>(relayState.valid),
                 static_cast<unsigned int>(relayState.onMask),
@@ -317,12 +418,7 @@ namespace app_config
         calibration.k2Micro[outletIndex] = k2Micro;
         calibration.validMask |= static_cast<uint8_t>(1U << outletIndex);
 
-        if (!settingsReady)
-        {
-            return 0;
-        }
-
-        return settings_save_one("sps/cal", &calibration, sizeof(calibration));
+        return save_setting("sps/cal", &calibration, sizeof(calibration));
     }
 
     bool relay_state_valid()
@@ -342,12 +438,7 @@ namespace app_config
         relayState.valid = 1;
         relayState.onMask = onMask & 0x0f;
 
-        if (!settingsReady)
-        {
-            return 0;
-        }
-
-        return settings_save_one("sps/relay", &relayState, sizeof(relayState));
+        return save_setting("sps/relay", &relayState, sizeof(relayState));
     }
 
     uint32_t on_threshold_mw()
@@ -368,12 +459,7 @@ namespace app_config
         }
 
         alertSettings.onThresholdMw = thresholdMw;
-        if (!settingsReady)
-        {
-            return 0;
-        }
-
-        return settings_save_one("sps/alerts", &alertSettings, sizeof(alertSettings));
+        return save_setting("sps/alerts", &alertSettings, sizeof(alertSettings));
     }
 
     int save_off_threshold_mw(uint32_t thresholdMw)
@@ -384,12 +470,7 @@ namespace app_config
         }
 
         alertSettings.offThresholdMw = thresholdMw;
-        if (!settingsReady)
-        {
-            return 0;
-        }
-
-        return settings_save_one("sps/alerts", &alertSettings, sizeof(alertSettings));
+        return save_setting("sps/alerts", &alertSettings, sizeof(alertSettings));
     }
 
     bool power_factor_alerts_enabled()
@@ -400,12 +481,7 @@ namespace app_config
     int save_power_factor_alerts_enabled(bool enabled)
     {
         alertSettings.powerFactorAlertsEnabled = enabled ? 1 : 0;
-        if (!settingsReady)
-        {
-            return 0;
-        }
-
-        return settings_save_one("sps/alerts", &alertSettings, sizeof(alertSettings));
+        return save_setting("sps/alerts", &alertSettings, sizeof(alertSettings));
     }
 
     uint32_t heartbeat_days_milli()
@@ -421,12 +497,7 @@ namespace app_config
         }
 
         heartbeatSettings.daysMilli = daysMilli;
-        if (!settingsReady)
-        {
-            return 0;
-        }
-
-        return settings_save_one("sps/heartbeat", &heartbeatSettings, sizeof(heartbeatSettings));
+        return save_setting("sps/heartbeat", &heartbeatSettings, sizeof(heartbeatSettings));
     }
 
 }

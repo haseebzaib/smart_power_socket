@@ -260,6 +260,15 @@ namespace cellular
         get_carrier();
         get_imei();
         get_simId();
+        if (modemInformation_.dataConnected)
+        {
+            get_location();
+        }
+        else
+        {
+            modemInformation_.latitude.fill('\0');
+            modemInformation_.longitude.fill('\0');
+        }
         info = modemInformation_;
     }
 
@@ -828,6 +837,8 @@ namespace cellular
 
     void sim7080::get_location()
     {
+        modemInformation_.latitude.fill('\0');
+        modemInformation_.longitude.fill('\0');
         constexpr std::string_view prefix = "+CLBS:";
         cellular::atEngine::atResponse atResponse_ = atEngine_.send_command(
             atGetATCLBS,
@@ -837,6 +848,7 @@ namespace cellular
 
         if (atResponse_.result != cellular::atEngine::atResult::OK)
         {
+            LOG_WRN("Cellular location unavailable: query failed");
             return;
         }
 
@@ -903,8 +915,8 @@ namespace cellular
             LOG_WRN("Latitude buffer too small");
         }
 
-        LOG_DBG("Longitude: %s", modemInformation_.longitude.data());
-        LOG_DBG("Latitude: %s", modemInformation_.latitude.data());
+        LOG_INF("Cellular location: latitude=%s longitude=%s",
+                modemInformation_.latitude.data(), modemInformation_.longitude.data());
     }
 
     std::string_view sim7080::trim(std::string_view text)

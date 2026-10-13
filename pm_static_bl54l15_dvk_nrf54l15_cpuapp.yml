@@ -1,0 +1,31 @@
+# Preserve the application limit; leave the old internal settings area unused.
+app:
+  address: 0x0
+  region: flash_primary
+  size: 0x15c000
+unused_internal_storage:
+  address: 0x15c000
+  region: flash_primary
+  size: 0x9000
+# These two areas reserve space for future OTA images; no bootloader yet.
+ota_image_a:
+  address: 0x0
+  region: external_flash
+  size: 0x100000
+ota_image_b:
+  address: 0x100000
+  region: external_flash
+  size: 0x100000
+# Keep settings addresses stable; reserve the freed space for future layouts.
+ota_growth_reserve:
+  address: 0x200000
+  region: external_flash
+  size: 0x200000
+settings_storage:
+  address: 0x400000
+  region: external_flash
+  size: 0x10000
+data_storage:
+  address: 0x410000
+  region: external_flash
+  size: 0x3f0000

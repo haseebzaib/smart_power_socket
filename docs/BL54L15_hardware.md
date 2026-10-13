@@ -62,6 +62,31 @@ C19 (100 nF) supplies the shown 4.7 ms RC filter. No internal pull is enabled.
 Firmware looks for a low pulse over up to 40 ms, sampling about every 1 ms,
 so a sample near an AC zero crossing is not mistaken for an outage.
 
+GPIO interrupts additionally time active edges continuously, including during
+modem queries. Up to eight valid pulse intervals are averaged; at least three
+recent intervals are needed. The LTV-814 has antiparallel input LEDs, so both
+half-cycles conduct: pulse frequency is approximately twice mains frequency.
+The logged mains estimate divides the measured pulse rate by two. Intervals
+outside 6-15 ms reset the averaging window instead of counting glitches or
+missing cycles as valid frequency samples. Frequency is diagnostic only and
+does not control the AC-presence decision or fuse alert.
+
+At each main-loop input check, logs appear on presence/frequency-validity
+changes or approximately every 10 seconds (long modem operations can delay
+logging):
+
+```text
+fuse_detection: AC available, freq ~60.00 Hz (pulse 120.00 Hz)
+fuse_detection: AC available, freq unavailable (no stable pulses)
+fuse_detection: AC unavailable, freq unavailable
+```
+
+The RC filter may suppress zero-crossing edges and leave a steady low input.
+That still reports AC available, with frequency unavailable; the firmware does
+not invent a 50/60 Hz reading. Timing is an estimate from digital edges,
+not a precision mains measurement. A pulse-timing initialization failure is
+logged while the original AC-presence sampling continues.
+
 The diagnosis assumes AC_IN is upstream of the fuse and metering is downstream.
 If all metering channels are below the existing 50 V detection threshold while
 input AC is detected for three consecutive network-ready alert polls, send
@@ -85,7 +110,7 @@ sheet in `SPS SMS Commands.xlsx` for the SMS behavior.
 The confirmed pin list is the source for the overlay and table above.
 FLASH_CLK P2.01, FLASH_IO0/MOSI P2.02, and FLASH_IO1/MISO P2.04 match
 hardware SPIM00. The overlay enables SPIM00 with explicit default/sleep
-pinctrl and FLASH_CS on P2.05. The inherited MX25R6435F node provides the
+pinctrl and FLASH_CS on P2.05. The fitted part is MX25R6435FZNIL0. The inherited MX25R6435F node provides the
 64 Mbit capacity, JEDEC ID, SFDP, and deep-power-down parameters; its SPI
 frequency is 8 MHz.
 
@@ -98,9 +123,14 @@ P1.09 is reserved for future debug TX and is not configured by firmware.
 SWDIO/SWDCLK use their dedicated pins; SWO is P2.07. Logging uses RTT,
 so firmware does not assign P1.09 or drive SWO for serial logging.
 
-Settings/NVS remain in internal RRAM through `pm_static.yml`.
-The firmware does not currently read or write application data to external
-flash; its driver is enabled and initializes the device.
+Settings/NVS use the external NOR data partition at `0x400000` (64 KiB).
+The board-specific `pm_static_bl54l15_dvk_nrf54l15_cpuapp.yml` reserves two
+1 MiB OTA image areas, a 2 MiB growth reserve, and the remaining flash for future data. Existing
+internal settings area remains reserved and unused; firmware does not mount
+or migrate it. Fresh external storage uses defaults until settings are reapplied.
+See [external flash storage](External_flash_storage.md).
+The firmware uses external flash for calibration, relay state, alert settings
+and heartbeat settings. The additional data partition remains reserved.
 
 ## Firmware review and assumptions
 

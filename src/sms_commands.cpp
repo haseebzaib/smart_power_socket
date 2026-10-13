@@ -863,7 +863,7 @@ namespace sms_commands
         }
 
         const char *sim = "Unknown";
-        const std::string_view pin{modem.pinStatus.data()};
+        const std::string_view pin{modem.pin.data()};
         if (pin == "READY") sim = "Ready";
         else if (pin.find("PIN") != std::string_view::npos ||
                  pin.find("PUK") != std::string_view::npos) sim = "Locked";
@@ -876,7 +876,15 @@ namespace sms_commands
             const double number = std::strtod(value, &end);
             if (end != value && *end == '\0' && std::isfinite(number) &&
                 std::abs(number) <= limit)
-                std::snprintf(result.data(), result.size(), "%.6f", number);
+            {
+                // Integer formatting also works without Newlib float printf.
+                const int32_t scaled = static_cast<int32_t>(
+                    number * 1000000.0 + (number < 0 ? -0.5 : 0.5));
+                const unsigned magnitude = static_cast<unsigned>(scaled < 0 ? -scaled : scaled);
+                std::snprintf(result.data(), result.size(), "%s%u.%06u",
+                              scaled < 0 ? "-" : "", magnitude / 1000000U,
+                              magnitude % 1000000U);
+            }
             else
                 std::snprintf(result.data(), result.size(), "Unknown");
             return result;
@@ -884,7 +892,7 @@ namespace sms_commands
         const auto latitude = coordinate(modem.latitude.data(), 90.0);
         const auto longitude = coordinate(modem.longitude.data(), 180.0);
 
-        // Nine useful fields, including location, fit in a single SMS even
+        // The useful fields, including location, fit in a single SMS even
         // with maximum-length identities and negative coordinates.
         std::array<char, 161> response{};
         const int length = std::snprintf(response.data(), response.size(),

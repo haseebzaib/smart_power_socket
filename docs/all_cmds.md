@@ -51,8 +51,9 @@ Fields:
 
 ### `getcellularinfo`
 
-Requests a fresh cellular summary and replies to the sender in **one SMS**, using
-plain field names and the compact SPA format. Case-insensitive; no arguments.
+Replies to the sender in **one SMS** with the main cellular information.
+Case-insensitive; no arguments. No modem commands or registration codes appear
+in the reply. Latitude and longitude are always included.
 
 ```text
 getcellularinfo
@@ -61,32 +62,43 @@ getcellularinfo
 Example:
 
 ```text
-Cmd=GetCellularInfo
+Cellular
+Carrier=AT&T
+Network=Roaming
+Signal=-63 dBm
+SIM=Ready
 IMEI=863866074042672
 ICCID=89882280666242663460
-Phone=NONE
-Netw=Roaming
-Carrier=AT&T
-RSL=-63
-APN=iot.1nce.net
+Lat=42.056050
+Lon=-91.654126
 ```
 
-- `IMEI`: modem identity (up to 15 characters).
-- `ICCID`: SIM card identity (up to 20 characters).
-- `Phone`: `NONE`; the firmware does not currently query the SIM's phone number.
-- `Netw`: `Home`, `Roaming`, `Searching`, `Unregistered`, `Denied`, or `Unknown`.
-- `Carrier`: operator name (up to 24 characters).
-- `RSL`: signal estimate in dBm, or `Unknown` when unavailable.
-- `APN`: APN configured in the firmware.
+- `Carrier`: mobile operator (up to 16 characters).
+- `Network`: Connected, Roaming, Searching, Offline, Denied or Unknown.
+  Connected and Roaming both mean registered successfully.
+- `Signal`: received signal estimate in dBm; a less negative value is stronger.
+  Unknown means no valid reading is available.
+- `SIM`: Ready, Locked (PIN/PUK required) or Unknown.
+- `IMEI`: modem identity; `ICCID`: SIM identity. These help identify a unit.
+- `Lat` / `Lon`: cellular location estimate in decimal degrees, to six decimal
+  places. Unknown means the modem could not obtain the location; the firmware
+  does not substitute zero or a previous position. This is a network-based
+  estimate, not a GPS fix.
 
-The response is bounded to 160 characters, with no numbered parts or raw AT
-responses. Identity/PIN/carrier query failures may report `Error`, `Unknown`, or
-empty identities. It refreshes signal, registration, carrier and identities
-without changing the selected carrier or radio settings.
+The reply fits within 160 characters. Registration, signal, SIM status, operator
+and identities are refreshed. When a data connection is active, the firmware
+also requests a location; this can take up to 30 seconds. Failed identity
+queries may report Error or Unknown. The command does not change network
+settings.
 
-Raw signal responses and readable registration status are logged at INFO level.
-LTE registration and serving-cell responses are logged about every 30 seconds,
-including while searching. See [cellular signal diagnostics](Cellular_signal_diagnostics.md).
+Signal and readable registration details are logged. Additional modem details
+remain available in the firmware logs for troubleshooting, rather than in the
+user's SMS. See [cellular signal diagnostics](Cellular_signal_diagnostics.md).
+
+On BL54L15, calibration, relay state, alert settings and heartbeat settings are
+persisted in external flash, with readback verification after saves. Internal
+settings storage is unused and is not automatically migrated. See
+[external flash storage](External_flash_storage.md).
 
 ### `GetOutletData`
 
@@ -518,3 +530,19 @@ ERR RunCalibration K2
 ERR RunCalibration save
 ERR RunCalibration apply
 ```
+
+### Fuse-detection diagnostic logs
+
+On the BL54L15 carrier, INFO logs report input AC availability and an approximate
+frequency when stable optocoupler pulses are measurable:
+
+```text
+fuse_detection: AC available, freq ~60.00 Hz (pulse 120.00 Hz)
+```
+
+The optocoupler detects both half-cycles; pulse frequency is divided by two for
+the mains estimate. A steady active input still means AC available, but logs
+frequency unavailable because the RC filter can suppress measurable edges.
+Frequency is diagnostic only; fuse/utility alert decisions remain based on
+AC presence and socket metering. Logs appear on state changes or roughly every
+10 seconds when the main loop reaches its input check.

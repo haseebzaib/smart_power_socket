@@ -30,6 +30,78 @@ hardware::gpioCon utilityPwrLed(GPIO_DT_SPEC_GET(DT_ALIAS(utility_pwr_led), gpio
 #if DT_NODE_EXISTS(DT_ALIAS(fuse_detection))
 hardware::gpioCon fuseDetection(GPIO_DT_SPEC_GET(DT_ALIAS(fuse_detection), gpios), GPIO_INPUT);
 bool fuseDetectionReady = false;
+namespace
+{
+	const gpio_dt_spec fuseDetectionGpio = GPIO_DT_SPEC_GET(DT_ALIAS(fuse_detection), gpios);
+	gpio_callback fuseDetectionCallback{};
+	k_spinlock fusePulseLock{};
+	std::array<uint32_t, 8> fusePeriodsUs{};
+	uint32_t fusePeriodSumUs = 0;
+	uint32_t fusePreviousCycle = 0;
+	int64_t fuseLastEdgeMs = -1;
+	size_t fusePeriodCount = 0;
+	size_t fusePeriodIndex = 0;
+	bool fuseFrequencyReady = false;
+
+	void fuse_detection_edge(const device *, gpio_callback *, gpio_port_pins_t)
+	{
+		const uint32_t cycle = k_cycle_get_32();
+		const int64_t nowMs = k_uptime_get();
+		const auto key = k_spin_lock(&fusePulseLock);
+		const uint32_t periodUs = static_cast<uint32_t>(
+			k_cyc_to_us_floor64(static_cast<uint32_t>(cycle - fusePreviousCycle)));
+		// Two active pulses per mains cycle. Reject glitches and missing cycles;
+		// 6-15 ms covers the expected 50/60 Hz half-cycle interval.
+		if (fuseLastEdgeMs >= 0 && nowMs - fuseLastEdgeMs <= 40 &&
+			periodUs >= 6000 && periodUs <= 15000)
+		{
+			if (fusePeriodCount == fusePeriodsUs.size())
+				fusePeriodSumUs -= fusePeriodsUs[fusePeriodIndex];
+			else
+				++fusePeriodCount;
+			fusePeriodsUs[fusePeriodIndex] = periodUs;
+			fusePeriodSumUs += periodUs;
+			fusePeriodIndex = (fusePeriodIndex + 1) % fusePeriodsUs.size();
+		}
+		else
+		{
+			fusePeriodCount = 0;
+			fusePeriodIndex = 0;
+			fusePeriodSumUs = 0;
+		}
+		fusePreviousCycle = cycle;
+		fuseLastEdgeMs = nowMs;
+		k_spin_unlock(&fusePulseLock, key);
+	}
+
+	void log_fuse_detection(bool acPresent)
+	{
+		const int64_t nowMs = k_uptime_get();
+		const auto key = k_spin_lock(&fusePulseLock);
+		const bool frequencyValid = fuseFrequencyReady && acPresent &&
+			fuseLastEdgeMs >= 0 && nowMs - fuseLastEdgeMs <= 40 && fusePeriodCount >= 3;
+		const uint32_t frequencyCentiHz = frequencyValid ?
+			static_cast<uint32_t>(50000000ULL * fusePeriodCount / fusePeriodSumUs) : 0;
+		k_spin_unlock(&fusePulseLock, key);
+
+		static int64_t nextLogMs = 0;
+		static bool lastPresent = false;
+		static bool lastFrequencyValid = false;
+		if (nowMs < nextLogMs && acPresent == lastPresent &&
+			frequencyValid == lastFrequencyValid) return;
+		if (!acPresent)
+			LOG_INF("fuse_detection: AC unavailable, freq unavailable");
+		else if (frequencyValid)
+			LOG_INF("fuse_detection: AC available, freq ~%u.%02u Hz (pulse %u.%02u Hz)",
+					frequencyCentiHz / 100U, frequencyCentiHz % 100U,
+					frequencyCentiHz * 2U / 100U, frequencyCentiHz * 2U % 100U);
+		else
+			LOG_INF("fuse_detection: AC available, freq unavailable (no stable pulses)");
+		lastPresent = acPresent;
+		lastFrequencyValid = frequencyValid;
+		nextLogMs = nowMs + 10000;
+	}
+}
 #endif
 
 bool input_ac_present()
@@ -53,10 +125,12 @@ bool input_ac_present()
 		}
 		if (value == 1) // GPIO_ACTIVE_LOW: a low level means input AC present.
 		{
+			log_fuse_detection(true);
 			return true;
 		}
 		k_msleep(1);
 	} while (k_uptime_get() < deadlineMs);
+	log_fuse_detection(false);
 #endif
 	return false;
 }
@@ -132,6 +206,19 @@ int main(void)
 	if (!fuseDetectionReady)
 	{
 		LOG_ERR("Fuse detection GPIO init failed: %d", fuseDetectionRet);
+	}
+	else
+	{
+		gpio_init_callback(&fuseDetectionCallback, fuse_detection_edge,
+						   BIT(fuseDetectionGpio.pin));
+		int ret = gpio_add_callback(fuseDetectionGpio.port, &fuseDetectionCallback);
+		if (ret == 0)
+			ret = gpio_pin_interrupt_configure_dt(&fuseDetectionGpio, GPIO_INT_EDGE_TO_ACTIVE);
+		fuseFrequencyReady = ret == 0;
+		if (!fuseFrequencyReady)
+			LOG_WRN("fuse_detection: pulse timing init failed: %d; AC presence still sampled", ret);
+		else
+			LOG_INF("fuse_detection: pulse timing enabled on P1.12; two pulses per AC cycle");
 	}
 #endif
 	cellularLed.init();
