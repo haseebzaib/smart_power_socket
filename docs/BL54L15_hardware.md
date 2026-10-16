@@ -141,6 +141,12 @@ and heartbeat settings. The additional data partition remains reserved.
 
 ## Firmware review and assumptions
 
+- Relay outputs also enable their input buffers for GPIO state readback used by
+  status reporting and persistence. Output polarity and initial drive values
+  retain the existing firmware convention.
+- Unexpected MCU restarts during relay commands are under investigation. See
+  [relay restart diagnostics](Relay_restart_diagnostics.md) for reset-cause and
+  command-stage logging; a confirmed reset cause is still needed.
 - Relay GPIO flags remain `GPIO_ACTIVE_HIGH`, matching the original overlay.
   At the user's request, firmware relay changes were reverted: startup restoration,
   SMS commands, and status reporting retain the original 0 = ON, 1 = OFF

@@ -115,7 +115,9 @@ calibration, relay, alerts and heartbeat respectively; calibration-mask bits
 identify outlets with saved calibration. Missing entries retain defaults.
 
 Successful saves are read back from the settings backend and byte-compared
-before success is returned. For example:
+before success is returned. Relay commands skip flash access if the mask matches
+its last successfully loaded or verified saved value. Failed writes/readbacks
+invalidate that cache so a later command retries persistence. For example:
 
 ```text
 Settings persisted and verified: sps/cal (24 bytes)

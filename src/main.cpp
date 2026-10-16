@@ -12,6 +12,7 @@
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/ring_buffer.h>
 #include <zephyr/drivers/uart.h>
+#include <zephyr/drivers/hwinfo.h>
 #include <zephyr/logging/log.h>
 
 #include "hardware/gpio_con.hpp"
@@ -156,10 +157,12 @@ bool input_ac_present()
 }
 
 hardware::gpioCon cellularLed(GPIO_DT_SPEC_GET(DT_ALIAS(cellular_led), gpios), GPIO_OUTPUT_HIGH);
-hardware::gpioCon relay1(GPIO_DT_SPEC_GET(DT_ALIAS(relay1), gpios), GPIO_OUTPUT_INACTIVE);
-hardware::gpioCon relay2(GPIO_DT_SPEC_GET(DT_ALIAS(relay2), gpios), GPIO_OUTPUT_INACTIVE);
-hardware::gpioCon relay3(GPIO_DT_SPEC_GET(DT_ALIAS(relay3), gpios), GPIO_OUTPUT_INACTIVE);
-hardware::gpioCon relay4(GPIO_DT_SPEC_GET(DT_ALIAS(relay4), gpios), GPIO_OUTPUT_INACTIVE);
+// State reporting/persistence reads the pin; keep the input buffer connected
+// while driving each relay output. Nordic GPIO disconnects it for output-only.
+hardware::gpioCon relay1(GPIO_DT_SPEC_GET(DT_ALIAS(relay1), gpios), GPIO_OUTPUT_INACTIVE | GPIO_INPUT);
+hardware::gpioCon relay2(GPIO_DT_SPEC_GET(DT_ALIAS(relay2), gpios), GPIO_OUTPUT_INACTIVE | GPIO_INPUT);
+hardware::gpioCon relay3(GPIO_DT_SPEC_GET(DT_ALIAS(relay3), gpios), GPIO_OUTPUT_INACTIVE | GPIO_INPUT);
+hardware::gpioCon relay4(GPIO_DT_SPEC_GET(DT_ALIAS(relay4), gpios), GPIO_OUTPUT_INACTIVE | GPIO_INPUT);
 
 hardware::adcCon batteryAdc(HARDWARE_ADC_CHANNEL_DT_SPEC_GET(DT_ALIAS(batt_volt_adc)), 110000, 110000);
 
@@ -212,6 +215,21 @@ bool sms_network_ready(const cellular::sim7080::modemInformation &modemInfo)
 int main(void)
 {
 	const int64_t bootTimeMs = k_uptime_get();
+	uint32_t resetCause = 0;
+	const int resetRet = hwinfo_get_reset_cause(&resetCause);
+	if (resetRet == 0)
+	{
+		LOG_INF("Boot reset cause: 0x%08x pin=%u software=%u watchdog=%u lockup=%u debug=%u",
+				resetCause, !!(resetCause & RESET_PIN), !!(resetCause & RESET_SOFTWARE),
+				!!(resetCause & RESET_WATCHDOG), !!(resetCause & RESET_CPU_LOCKUP),
+				!!(resetCause & RESET_DEBUG));
+		if (resetCause == 0)
+			LOG_INF("No classified reset cause; power-on/supply interruption remains possible");
+		const int clearRet = hwinfo_clear_reset_cause();
+		if (clearRet != 0) LOG_WRN("Reset cause clear failed: %d", clearRet);
+	}
+	else
+		LOG_WRN("Reset cause unavailable: %d", resetRet);
 	const int appConfigRet = app_config::init();
 	LOG_INF("App config init ret: %d", appConfigRet);
 	heartBeatDaysMilli = app_config::heartbeat_days_milli();
@@ -262,6 +280,8 @@ int main(void)
 		if (energyMeterErr[meter - 1] != 0)
 		{
 			nextEnergyMeterRetryMs[meter - 1] = k_uptime_get() + energyMeterRetryIntervalMs;
+			LOG_WRN("HLW811x meter %u initialization failed; retry due in 30 s when main loop runs",
+					static_cast<unsigned>(meter));
 		}
 	}
 
@@ -295,13 +315,21 @@ int main(void)
 				}
 
 				const hlw811x_resistor_ratio ratio = app_config::ratio_for_outlet(meter - 1);
+				LOG_INF("HLW811x meter %u configure retry begin (previous error=%d)",
+						static_cast<unsigned>(meter), energyMeterErr[meter - 1]);
 				energyMeterErr[meter - 1] = energyMeters.configureIndividual(meter, ratio, baselinePga);
 				if (energyMeterErr[meter - 1] != 0)
 				{
-					nextEnergyMeterRetryMs[meter - 1] = nowMs + energyMeterRetryIntervalMs;
-					LOG_WRN("HLW811x meter %u configure retry failed: %d",
+					nextEnergyMeterRetryMs[meter - 1] = k_uptime_get() + energyMeterRetryIntervalMs;
+					LOG_WRN("HLW811x meter %u configure retry failed: %d; retry due in 30 s",
 							static_cast<unsigned int>(meter),
 							energyMeterErr[meter - 1]);
+				}
+				else
+				{
+					nextEnergyMeterRetryMs[meter - 1] = 0;
+					LOG_INF("HLW811x meter %u configure retry succeeded; measurements resume next loop",
+							static_cast<unsigned>(meter));
 				}
 			}
 			else

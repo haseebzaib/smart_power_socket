@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cmath>
 #include <cstdio>
@@ -412,37 +413,65 @@ namespace sms_commands
         return static_cast<int32_t>(-static_cast<int64_t>(value));
     }
 
-    void set_outlet_relay(const context &ctx, std::size_t outletIndex, bool on)
+    int set_outlet_relay(const context &ctx, std::size_t outletIndex, bool on)
     {
         if (outletIndex >= ctx.relays.size() || ctx.relays[outletIndex] == nullptr)
         {
-            return;
+            return -EINVAL;
         }
 
-        ctx.relays[outletIndex]->set(on ? 0 : 1);
+        const int desired = on ? 0 : 1; // Preserve the existing relay convention.
+        const int previous = ctx.relays[outletIndex]->get();
+        if (previous < 0)
+        {
+            LOG_ERR("Relay %u read failed: %d", static_cast<unsigned>(outletIndex + 1), previous);
+            return previous;
+        }
+        if (previous == desired)
+        {
+            LOG_INF("Relay %u already %s; GPIO write skipped", static_cast<unsigned>(outletIndex + 1), on ? "ON" : "OFF");
+            return 0;
+        }
+        LOG_INF("Relay %u switch begin: %s (GPIO %d -> %d)", static_cast<unsigned>(outletIndex + 1),
+                on ? "ON" : "OFF", previous, desired);
+        const int ret = ctx.relays[outletIndex]->set(desired);
+        LOG_INF("Relay %u switch complete: ret=%d", static_cast<unsigned>(outletIndex + 1), ret);
+        return ret;
     }
 
-    uint8_t relay_on_mask(const context &ctx)
+    int read_relay_on_mask(const context &ctx, uint8_t &mask)
     {
-        uint8_t mask = 0;
+        mask = 0;
         for (std::size_t i = 0; i < ctx.relays.size(); ++i)
         {
-            if (ctx.relays[i] != nullptr && device_status::outlet_on(*ctx.relays[i]))
+            if (ctx.relays[i] == nullptr) return -ENODEV;
+            const int value = ctx.relays[i]->get();
+            if (value < 0) return value;
+            if (value == 0)
             {
                 mask |= static_cast<uint8_t>(1U << i);
             }
         }
 
-        return mask;
+        return 0;
     }
 
-    void save_relay_state(const context &ctx)
+    int save_relay_state(const context &ctx)
     {
-        const int ret = app_config::save_relay_on_mask(relay_on_mask(ctx));
+        uint8_t mask = 0;
+        int ret = read_relay_on_mask(ctx, mask);
+        if (ret != 0)
+        {
+            LOG_ERR("relay state read failed: %d; flash save skipped", ret);
+            return ret;
+        }
+        LOG_INF("Relay persistence begin: mask=0x%02x", static_cast<unsigned>(mask));
+        ret = app_config::save_relay_on_mask(mask);
         if (ret != 0)
         {
             LOG_ERR("relay state save failed: %d", ret);
         }
+        return ret;
     }
 
     bool outlet_relay_on(const context &ctx, std::size_t outletIndex)
@@ -1077,50 +1106,50 @@ namespace sms_commands
                          enabled ? "OK PowerFactorAlerts=On" : "OK PowerFactorAlerts=Off");
     }
 
-    void handle_device_on(const context &ctx,
-                          std::string_view sender,
-                          std::string_view body)
+    void handle_device_switch(const context &ctx,
+                              std::string_view sender,
+                              std::string_view body, bool on)
     {
+        const char *command = on ? "DeviceOn" : "DeviceOff";
         std::array<bool, device_status::outletCount> mask{};
         if (!parse_outlet_mask(body, mask))
         {
-            send_command_ack(ctx, sender, "ERR DeviceOn");
+            send_command_ack(ctx, sender, on ? "ERR DeviceOn" : "ERR DeviceOff");
             return;
         }
 
+        LOG_INF("%s: relay switching begin", command);
+        int switchRet = 0;
         for (std::size_t i = 0; i < mask.size(); ++i)
         {
             if (mask[i])
             {
-                set_outlet_relay(ctx, i, true);
+                const int ret = set_outlet_relay(ctx, i, on);
+                if (ret != 0 && switchRet == 0) switchRet = ret;
             }
         }
+        LOG_INF("%s: relay switching complete ret=%d", command, switchRet);
+        const int saveRet = save_relay_state(ctx);
+        const char *reply = switchRet != 0 ? (on ? "ERR DeviceOn GPIO" : "ERR DeviceOff GPIO") :
+            saveRet != 0 ? (on ? "ERR DeviceOn save" : "ERR DeviceOff save") :
+            (on ? "OK DeviceOn" : "OK DeviceOff");
+        LOG_INF("%s: persistence complete ret=%d; SMS reply begin", command, saveRet);
+        const bool sent = send_command_ack(ctx, sender, reply);
+        LOG_INF("%s: SMS reply complete sent=%u", command, static_cast<unsigned>(sent));
+    }
 
-        save_relay_state(ctx);
-        send_command_ack(ctx, sender, "OK DeviceOn");
+    void handle_device_on(const context &ctx,
+                          std::string_view sender,
+                          std::string_view body)
+    {
+        handle_device_switch(ctx, sender, body, true);
     }
 
     void handle_device_off(const context &ctx,
                            std::string_view sender,
                            std::string_view body)
     {
-        std::array<bool, device_status::outletCount> mask{};
-        if (!parse_outlet_mask(body, mask))
-        {
-            send_command_ack(ctx, sender, "ERR DeviceOff");
-            return;
-        }
-
-        for (std::size_t i = 0; i < mask.size(); ++i)
-        {
-            if (mask[i])
-            {
-                set_outlet_relay(ctx, i, false);
-            }
-        }
-
-        save_relay_state(ctx);
-        send_command_ack(ctx, sender, "OK DeviceOff");
+        handle_device_switch(ctx, sender, body, false);
     }
 
     void handle_device_reboot(const context &ctx,
@@ -1144,8 +1173,8 @@ namespace sms_commands
             reboot_outlet(ctx, i);
         }
 
-        save_relay_state(ctx);
-        send_command_ack(ctx, sender, "OK DeviceReboot");
+        const int ret = save_relay_state(ctx);
+        send_command_ack(ctx, sender, ret == 0 ? "OK DeviceReboot" : "ERR DeviceReboot save");
     }
 
     void handle_reboot(const context &ctx,
@@ -1160,8 +1189,8 @@ namespace sms_commands
         }
 
         reboot_outlet(ctx, outletIndex);
-        save_relay_state(ctx);
-        send_command_ack(ctx, sender, "OK Reboot");
+        const int ret = save_relay_state(ctx);
+        send_command_ack(ctx, sender, ret == 0 ? "OK Reboot" : "ERR Reboot save");
     }
 
     void handle_get_outlet_data(const context &ctx,

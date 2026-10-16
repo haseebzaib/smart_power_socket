@@ -138,6 +138,13 @@ PF=0.99</pre></td>
   </table>
 
   <h2>Turn Outlets On</h2>
+  <p>Repeated ON/OFF requests skip outputs already in the requested state and
+  skip flash access when the relay state matches its last loaded or verified
+  saved value. GPIO errors return <code>ERR DeviceOn GPIO</code> or
+  <code>ERR DeviceOff GPIO</code>; save errors return
+  <code>ERR DeviceOn save</code> or <code>ERR DeviceOff save</code>.
+  Outputs may already have changed before an error is reported.
+  See <a href="Relay_restart_diagnostics.md">relay restart diagnostics</a>.</p>
   <table>
     <tr><th>Send SMS</th><th>Output</th></tr>
     <tr>

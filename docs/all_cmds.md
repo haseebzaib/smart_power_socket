@@ -138,9 +138,21 @@ Fields:
 
 ## Relay Commands
 
-Relay logic is active-low in hardware, but SMS commands use logical ON/OFF.
+SMS commands use logical ON/OFF, retaining the existing firmware convention
+of GPIO 0 for ON and GPIO 1 for OFF.
 
 Relay state is saved to flash after these commands. On reboot, the device restores the saved relay state. If no saved state exists, all relays default ON.
+
+`DeviceOn` / `DeviceOff` skip GPIO writes for outlets already in the requested
+state. When the complete relay mask matches the last successfully loaded or
+verified saved mask, persistence also skips flash access. A failed save is
+retried on a subsequent command rather than treated as cached success.
+GPIO failures reply `ERR DeviceOn GPIO` / `ERR DeviceOff GPIO`; persistence
+failures reply `ERR DeviceOn save` / `ERR DeviceOff save` instead of `OK`.
+Some outputs may already have switched before an error is reported.
+`DeviceReboot` / `Reboot` also report persistence errors instead of `OK`.
+See [relay restart diagnostics](Relay_restart_diagnostics.md) for reset and
+command-stage logs used to investigate unexpected restarts.
 
 ### `DeviceOn`
 

@@ -107,12 +107,14 @@ namespace app_config
             static_assert(sizeof(alertStorage) <= sizeof(calibrationStorage));
             static_assert(sizeof(heartbeatStorage) <= sizeof(calibrationStorage));
             if (size > readback.size()) return -E2BIG;
+            LOG_INF("Settings write begin: %s", key);
             int ret = settings_save_one(key, value, size);
             if (ret != 0)
             {
                 LOG_ERR("Settings save %s failed: %d", key, ret);
                 return ret;
             }
+            LOG_INF("Settings readback begin: %s", key);
             const ssize_t length = settings_load_one(key, readback.data(), readback.size());
             if (length != static_cast<ssize_t>(size) || std::memcmp(readback.data(), value, size))
             {
@@ -452,12 +454,30 @@ namespace app_config
 
     int save_relay_on_mask(uint8_t onMask)
     {
-        relayState.magic = relayMagic;
-        relayState.version = storageVersion;
-        relayState.valid = 1;
-        relayState.onMask = onMask & 0x0f;
-
-        return save_setting("sps/relay", &relayState, sizeof(relayState));
+        onMask &= 0x0f;
+        if (settingsReady && (loadedSettings & 2U) && relayState.valid && relayState.onMask == onMask)
+        {
+            LOG_INF("Relay state unchanged: mask=0x%02x; flash access skipped", static_cast<unsigned>(onMask));
+            return 0;
+        }
+        relayStorage next = relayState;
+        next.magic = relayMagic;
+        next.version = storageVersion;
+        next.valid = 1;
+        next.onMask = onMask;
+        const int ret = save_setting("sps/relay", &next, sizeof(next));
+        if (ret == 0)
+        {
+            relayState = next;
+            loadedSettings |= 2U;
+        }
+        else
+        {
+            // A write/readback failure leaves the flash contents uncertain.
+            // Do not skip the next save based on the previous cached value.
+            loadedSettings &= static_cast<uint8_t>(~2U);
+        }
+        return ret;
     }
 
     uint32_t on_threshold_mw()
