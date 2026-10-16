@@ -57,6 +57,7 @@ namespace app_config
         constexpr uint8_t storageVersion = 1;
         constexpr uint32_t maxDeviceThresholdMw = 20000000U;
         constexpr uint32_t maxHeartbeatDaysMilli = 999999U;
+        constexpr uint32_t defaultHeartbeatDaysMilli = 30000U; // 30 days.
         constexpr int32_t defaultK2Micro = static_cast<int32_t>(defaultK2 * ratioScale + 0.5f);
 
         calibrationStorage calibration = {
@@ -86,7 +87,7 @@ namespace app_config
 
         heartbeatStorage heartbeatSettings = {
             .magic = heartbeatMagic,
-            .daysMilli = 0,
+            .daysMilli = defaultHeartbeatDaysMilli,
             .version = storageVersion,
             .reserved = {0, 0, 0},
         };
@@ -202,7 +203,7 @@ namespace app_config
                 heartbeatSettings.daysMilli > maxHeartbeatDaysMilli)
             {
                 heartbeatSettings.magic = heartbeatMagic;
-                heartbeatSettings.daysMilli = 0;
+                heartbeatSettings.daysMilli = defaultHeartbeatDaysMilli;
                 heartbeatSettings.version = storageVersion;
                 heartbeatSettings.reserved[0] = 0;
                 heartbeatSettings.reserved[1] = 0;

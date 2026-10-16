@@ -213,6 +213,8 @@ OK Reboot
 
 Sets the delay between periodic heartbeat messages. The value supports up to three decimal places
 and is saved to flash. `0` disables periodic heartbeats.
+The default is **30 days** when no saved setting exists or the stored value is
+invalid. Valid saved settings, including `0` (disabled), take precedence.
 
 ```text
 SetHeartbeatDays=30.43
