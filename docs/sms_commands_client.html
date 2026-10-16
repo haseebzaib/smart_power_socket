@@ -86,21 +86,23 @@ UpDays=0.123</pre></td>
   <h2>Get Hardware Info</h2>
   <p>Send <code>gethwinfo</code> (case-insensitive, no arguments). One SMS gives a
   compact hardware/runtime summary.</p>
-  <pre>HW=nRF54L15 FW=001.00
-CPUavg=6.3%
-Up=12345s
-Stack% M=28 L=44 Max=78
-HeapB=2048/4096
-Threads=7 IRQsize=4096B
-Reset=PIN
-SMSQ=2/24</pre>
-  <p>CPUavg is average busy CPU since boot. Up is uptime in seconds. Stack% shows
-  peak thread stack usage: M = main, L = logging, Max = highest thread percentage.
-  HeapB is malloc-arena used/free bytes, not total device RAM. Threads is the
-  observed thread count; IRQsize is configured interrupt-stack capacity, not its
-  measured usage. Reset is the primary boot reset cause (UNCLASS means no classified
-  cause). SMSQ is the outgoing queue depth/capacity before this reply is added.
-  N/A means unavailable. Replies use the shared retry queue.</p>
+  <pre>nRF54L15 FW=001.00
+CPU avg=3.2%
+Uptime=0d 1h 48m
+Stack peak%=Main:28 Log:44 Max:78
+Heap KiB=2 used/4 free
+Threads=7 Reset=Pin
+SMS queue=2/24</pre>
+  <p>Example readings only. CPU avg is average busy CPU since boot. Uptime is days,
+  hours and minutes. Stack peak% shows the highest stack usage since boot for
+  Main (application), Log (logging), and Max (highest thread percentage).
+  Lower percentages mean more stack headroom. Heap KiB shows allocator memory
+  used/free in whole KiB (1024 bytes), rounded down; free is not total unused RAM.
+  Threads counts operating-system threads. Reset names the recorded boot cause:
+  Pin, Software, Watchdog, Lockup, Debug, Other, Unknown or N/A.
+  SMS queue is pending outgoing messages / capacity before this reply is added.
+  N/A means unavailable. One SMS, maximum 160 characters, using the shared retry
+  queue. Detailed interrupt-stack readings remain in RTT logs.</p>
 
   <h2>Get Cellular Info</h2>
   <p>Send <code>getcellularinfo</code> (case-insensitive, no arguments).

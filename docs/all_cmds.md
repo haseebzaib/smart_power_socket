@@ -67,36 +67,38 @@ Returns one compact hardware/runtime summary SMS. Case-insensitive; no arguments
 gethwinfo
 ```
 
-Example:
+Example (illustrative readings):
 
 ```text
-HW=nRF54L15 FW=001.00
-CPUavg=6.3%
-Up=12345s
-Stack% M=28 L=44 Max=78
-HeapB=2048/4096
-Threads=7 IRQsize=4096B
-Reset=PIN
-SMSQ=2/24
+nRF54L15 FW=001.00
+CPU avg=3.2%
+Uptime=0d 1h 48m
+Stack peak%=Main:28 Log:44 Max:78
+Heap KiB=2 used/4 free
+Threads=7 Reset=Pin
+SMS queue=2/24
 ```
 
-- `HW` / `FW`: processor and firmware version.
-- `CPUavg`: scheduler-measured busy CPU percentage averaged since boot, not an
-  instantaneous load measurement. Unavailable statistics show N/A.
-- `Up`: kernel uptime in seconds.
-- `Stack%`: stack high-water usage percentages: M = main, L = logging,
-  Max = highest observed thread-stack percentage. These are peak usage since
-  boot, not current live-stack sizes. N/A means the stack could not be queried.
-- `HeapB`: Newlib malloc arena used/free bytes. Free means free within the
-  allocator's acquired arena, not all unused device RAM.
-- `Threads`: number of threads observed; `IRQsize`: configured interrupt-stack
-  capacity in bytes, not measured interrupt-stack usage.
-- `Reset`: primary recorded boot reset cause: PIN, SW, WDT, LOCKUP, DEBUG,
-  OTHER, UNCLASS (no classified cause) or N/A. Full flags remain in RTT logs.
-- `SMSQ`: pending outgoing messages / queue capacity, before this reply is added.
+- `nRF54L15` / `FW`: processor and firmware version.
+- `CPU avg`: busy CPU percentage averaged since boot, not instantaneous load.
+- `Uptime`: time since boot, in days, hours and minutes.
+- `Stack peak%`: highest stack usage since boot for Main (application), Log
+  (logging), and Max (the highest percentage among all threads). Lower means
+  more stack headroom; these are not current live-stack sizes.
+- `Heap KiB`: allocator memory used/free, rounded down to whole KiB (1024 bytes).
+  Free is within the Newlib malloc arena, not all unused device RAM.
+- `Threads`: observed number of operating-system threads.
+- `Reset`: primary recorded boot cause: Pin, Software, Watchdog, Lockup,
+  Debug, Other, Unknown (no classified cause), or N/A. Full flags remain in RTT.
+- `SMS queue`: outgoing messages pending / capacity, before this reply is added.
 
-The reply is bounded to 160 characters and uses the shared retry outbox. Full
-per-thread and interrupt-stack usage remains available in periodic RTT logs.
+N/A means unavailable. One SMS, maximum 160 characters, using the shared retry
+outbox. Detailed per-thread and interrupt-stack readings remain in RTT logs;
+configured interrupt-stack capacity is omitted from SMS because it is not usage.
+
+Formatting uses Newlib nano-compatible integer formats. Older replies containing
+`Up=lus` and scrambled fields after uptime were a formatting bug, not real memory
+or stack readings.
 
 ### `getcellularinfo`
 

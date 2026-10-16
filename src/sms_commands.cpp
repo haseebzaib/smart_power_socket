@@ -1005,18 +1005,26 @@ namespace sms_commands
         const auto heap = mallinfo();
         const uint32_t reset = ctx.bootResetCause;
         const char *reason = !ctx.bootResetCauseValid ? "N/A" :
-            reset == 0 ? "UNCLASS" : reset & RESET_WATCHDOG ? "WDT" :
-            reset & RESET_CPU_LOCKUP ? "LOCKUP" : reset & RESET_SOFTWARE ? "SW" :
-            reset & RESET_PIN ? "PIN" : reset & RESET_DEBUG ? "DEBUG" : "OTHER";
+            reset == 0 ? "Unknown" : reset & RESET_WATCHDOG ? "Watchdog" :
+            reset & RESET_CPU_LOCKUP ? "Lockup" : reset & RESET_SOFTWARE ? "Software" :
+            reset & RESET_PIN ? "Pin" : reset & RESET_DEBUG ? "Debug" : "Other";
+
+        // Newlib nano does not support %llu. Passing a 64-bit value to that
+        // format also corrupts subsequent fields on this target. Split uptime
+        // into ordinary unsigned values and use only supported printf formats.
+        const auto uptimeMinutes = static_cast<uint64_t>(k_uptime_get()) / 60000U;
+        const auto days = static_cast<unsigned>(uptimeMinutes / 1440U);
+        const auto hours = static_cast<unsigned>((uptimeMinutes / 60U) % 24U);
+        const auto minutes = static_cast<unsigned>(uptimeMinutes % 60U);
 
         std::array<char, 161> response{};
         const int length = std::snprintf(response.data(), response.size(),
-            "HW=nRF54L15 FW=%.8s\nCPUavg=%s\nUp=%llus\nStack%% M=%s L=%s Max=%s\n"
-            "HeapB=%u/%u\nThreads=%u IRQsize=%uB\nReset=%s\nSMSQ=%u/%u",
+            "nRF54L15 FW=%.8s\nCPU avg=%s\nUptime=%ud %uh %um\nStack peak%%=Main:%s Log:%s Max:%s\n"
+            "Heap KiB=%u used/%u free\nThreads=%u Reset=%s\nSMS queue=%u/%u",
             device_status::firmwareVersion.data(), cpu.data(),
-            static_cast<unsigned long long>(k_uptime_get() / 1000), mainStack.data(), logStack.data(), maxStack.data(),
-            static_cast<unsigned>(heap.uordblks), static_cast<unsigned>(heap.fordblks), stacks.threads,
-            static_cast<unsigned>(CONFIG_ISR_STACK_SIZE), reason,
+            days, hours, minutes, mainStack.data(), logStack.data(), maxStack.data(),
+            static_cast<unsigned>(heap.uordblks / 1024U),
+            static_cast<unsigned>(heap.fordblks / 1024U), stacks.threads, reason,
             static_cast<unsigned>(ctx.modem.sms_pending_count()),
             static_cast<unsigned>(ctx.modem.sms_outbox_capacity()));
         if (length <= 0 || static_cast<std::size_t>(length) >= response.size())
