@@ -150,7 +150,7 @@ namespace cellular
         return 0;
     }
 
-    void sim7080::loop(modemInformation &modemInfo)
+    void sim7080::loop(modemInformation &modemInfo, bool pollSms)
     {
 
         atEngine_.processRx();
@@ -177,9 +177,14 @@ namespace cellular
             copy_string_view_to_array("0.0.0.0", modemInformation_.ipAddress);
         }
 
-        // Poll for the next queued incoming SMS command (ALL, FIFO oldest first)
+        if (!pollSms && !smsPollingPaused_)
+            LOG_WRN("SMS command polling paused: reserve space for a complete command response; messages remain on SIM");
+        else if (pollSms && smsPollingPaused_)
+            LOG_INF("SMS command polling resumed: outbox capacity available");
+        smsPollingPaused_ = !pollSms;
+        // Do not consume another command unless its whole response can fit.
         smsMessage sms{};
-        if (read_next_sms(sms))
+        if (pollSms && read_next_sms(sms))
         {
             modemInformation_.smsReceived = 1;
             modemInformation_.smsNumber = sms.number;
@@ -1076,40 +1081,87 @@ namespace cellular
         return true;
     }
 
+    bool sim7080::sms_send_ready() const
+    {
+        return k_uptime_get() >= nextSmsAttemptMs_;
+    }
+
+    bool sim7080::can_queue_sms(std::size_t count) const
+    {
+        return count <= smsOutboxCapacity - smsOutboxCount_;
+    }
+
     bool sim7080::send_sms(std::string_view number, std::string_view body)
     {
-        const int64_t nowMs = k_uptime_get();
-        if (nowMs < nextSmsAttemptMs_)
+        if (number.empty() || number.size() >= smsOutbox_[0].recipient.size() ||
+            body.empty() || body.size() >= smsOutbox_[0].body.size())
         {
-            if (!smsCooldownLogged_)
-            {
-                const int64_t remainingSeconds =
-                    (nextSmsAttemptMs_ - nowMs + 999) / 1000;
-                LOG_WRN("SMS send suppressed during failure cooldown (%lld s remaining)",
-                        static_cast<long long>(remainingSeconds));
-                smsCooldownLogged_ = true;
-            }
+            LOG_ERR("SMS not queued: invalid recipient or payload length");
             return false;
         }
-
-        smsCooldownLogged_ = false;
-
-        // if (body.size() <= smsSingleMaxChars)
-        // {
-        const bool sent = send_sms_single(number, body);
-        // }
-        // const bool sent = send_sms_long(number, body);
-
-        if (!sent)
+        if (!can_queue_sms())
         {
-            nextSmsAttemptMs_ = k_uptime_get() + smsFailureRetryIntervalMs;
-            LOG_WRN("SMS sending paused for %lld seconds after failure",
-                    static_cast<long long>(smsFailureRetryIntervalMs / 1000));
+            LOG_WRN("SMS not queued: outbox full");
             return false;
         }
-
-        nextSmsAttemptMs_ = 0;
+        auto free = std::find_if(smsOutbox_.begin(), smsOutbox_.end(),
+                                 [](const auto &message) { return !message.active; });
+        if (free == smsOutbox_.end()) return false;
+        auto &message = *free;
+        message = outgoingSms{};
+        std::copy(number.begin(), number.end(), message.recipient.begin());
+        std::copy(body.begin(), body.end(), message.body.begin());
+        message.length = body.size();
+        message.id = nextSmsId_++;
+        message.active = true;
+        ++smsOutboxCount_;
+        LOG_INF("SMS queued: id=%llu bytes=%u pending=%u", static_cast<unsigned long long>(message.id),
+                static_cast<unsigned>(message.length), static_cast<unsigned>(smsOutboxCount_));
         return true;
+    }
+
+    void sim7080::process_sms_outbox()
+    {
+        if ((modemInformation_.networkRegistration != 1 && modemInformation_.networkRegistration != 5) ||
+            !sms_send_ready()) return;
+
+        // Round-robin between recipients, preserving FIFO for each recipient.
+        // A bad alert destination must not permanently block command replies.
+        for (unsigned attempts = 0; attempts < 4 && smsOutboxCount_ > 0; ++attempts)
+        {
+            outgoingSms *selected = nullptr;
+            for (std::size_t offset = 0; offset < smsOutboxCapacity; ++offset)
+            {
+                const std::size_t index = (nextSmsSlot_ + offset) % smsOutboxCapacity;
+                auto &candidate = smsOutbox_[index];
+                if (!candidate.active) continue;
+                const bool earlierPending = std::any_of(smsOutbox_.begin(), smsOutbox_.end(),
+                    [&candidate](const auto &other) {
+                        return other.active && other.id < candidate.id &&
+                            std::string_view{other.recipient.data()} == candidate.recipient.data();
+                    });
+                if (earlierPending) continue;
+                selected = &candidate;
+                nextSmsSlot_ = (index + 1) % smsOutboxCapacity;
+                break;
+            }
+            if (selected == nullptr) return;
+            const auto id = static_cast<unsigned long long>(selected->id);
+            LOG_INF("SMS submit attempt: id=%llu pending=%u", id,
+                    static_cast<unsigned>(smsOutboxCount_));
+            if (!send_sms_single(selected->recipient.data(),
+                                 std::string_view{selected->body.data(), selected->length}))
+            {
+                nextSmsAttemptMs_ = k_uptime_get() + smsFailureRetryIntervalMs;
+                LOG_WRN("SMS submit failed: id=%llu retained; retry after %lld seconds", id,
+                        static_cast<long long>(smsFailureRetryIntervalMs / 1000));
+                return;
+            }
+            LOG_INF("SMS accepted by modem: id=%llu", id);
+            selected->active = false;
+            --smsOutboxCount_;
+            nextSmsAttemptMs_ = 0;
+        }
     }
 
     bool sim7080::send_sms_single(std::string_view number, std::string_view body)

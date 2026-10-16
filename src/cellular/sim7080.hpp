@@ -67,7 +67,7 @@ namespace cellular
         };
 
         int init();
-        void loop(modemInformation &modemInfo);
+        void loop(modemInformation &modemInfo, bool pollSms = true);
 
         // Refresh the cellular fields used by the compact SMS response.
         void get_cellular_info(modemInformation &info);
@@ -77,9 +77,14 @@ namespace cellular
         // Returns true if a message was read, false if the queue is empty.
         bool read_next_sms(smsMessage &out);
 
-        // Sends an SMS; automatically switches to long/concatenated send
-        // (CMGSEX) when body exceeds a single SMS.
+        // Copies a message into the shared RAM outbox. True means queued,
+        // not delivered. All command replies and alerts use this path.
         bool send_sms(std::string_view number, std::string_view body);
+        bool sms_send_ready() const;
+        bool can_queue_sms(std::size_t count = 1) const;
+        void process_sms_outbox();
+        std::size_t sms_pending_count() const { return smsOutboxCount_; }
+        static constexpr std::size_t sms_outbox_capacity() { return smsOutboxCapacity; }
 
     private:
         bool send_sms_single(std::string_view number, std::string_view body);
@@ -87,6 +92,15 @@ namespace cellular
 
         static constexpr std::size_t smsSingleMaxChars = 160;
         static constexpr std::size_t smsSegmentChars = 153;
+        static constexpr std::size_t smsOutboxCapacity = 24;
+        struct outgoingSms
+        {
+            std::array<char, 32> recipient{};
+            std::array<char, 256> body{};
+            std::size_t length = 0;
+            uint64_t id = 0;
+            bool active = false;
+        };
 
         bool read_info(std::string_view command, std::string_view prefix,
                        std::span<char> output);
@@ -193,7 +207,11 @@ namespace cellular
         int64_t nextNetworkDiagnosticMs_ = 0;
         int64_t nextDataConnectionRetryMs_ = 0;
         int64_t nextSmsAttemptMs_ = 0;
-        bool smsCooldownLogged_ = false;
+        std::array<outgoingSms, smsOutboxCapacity> smsOutbox_{};
+        std::size_t nextSmsSlot_ = 0;
+        std::size_t smsOutboxCount_ = 0;
+        uint64_t nextSmsId_ = 1;
+        bool smsPollingPaused_ = false;
     };
 
 }

@@ -55,6 +55,12 @@
   <h1>SPS SMS Commands</h1>
 
   <h2>Get Status</h2>
+  <p>All command replies and alerts are queued and retried after network recovery
+  or the SMS-send cooldown. Each message is tracked separately, so an accepted
+  first part is not deliberately repeated when a later part fails. Command actions
+  are not repeated by message retries. The queue holds 24 messages in RAM; incoming
+  command polling pauses when fewer than four reply slots remain. Pending messages
+  do not survive a reboot. See <a href="SMS_reply_reliability.md">SMS reply reliability</a>.</p>
   <table>
     <tr><th>Send SMS</th><th>Output SMS 1</th><th>Output SMS 2</th></tr>
     <tr>
@@ -76,6 +82,25 @@ UpDays=0.123</pre></td>
 4=119.190V,0.001A,0.000W</pre></td>
     </tr>
   </table>
+
+  <h2>Get Hardware Info</h2>
+  <p>Send <code>gethwinfo</code> (case-insensitive, no arguments). One SMS gives a
+  compact hardware/runtime summary.</p>
+  <pre>HW=nRF54L15 FW=001.00
+CPUavg=6.3%
+Up=12345s
+Stack% M=28 L=44 Max=78
+HeapB=2048/4096
+Threads=7 IRQsize=4096B
+Reset=PIN
+SMSQ=2/24</pre>
+  <p>CPUavg is average busy CPU since boot. Up is uptime in seconds. Stack% shows
+  peak thread stack usage: M = main, L = logging, Max = highest thread percentage.
+  HeapB is malloc-arena used/free bytes, not total device RAM. Threads is the
+  observed thread count; IRQsize is configured interrupt-stack capacity, not its
+  measured usage. Reset is the primary boot reset cause (UNCLASS means no classified
+  cause). SMSQ is the outgoing queue depth/capacity before this reply is added.
+  N/A means unavailable. Replies use the shared retry queue.</p>
 
   <h2>Get Cellular Info</h2>
   <p>Send <code>getcellularinfo</code> (case-insensitive, no arguments).
@@ -200,9 +225,10 @@ Reboot=4</pre></td>
   </table>
 
   <h2>Device Power Detection Thresholds</h2>
-  <p>These universal settings apply to all four outlets and are saved across restarts. At startup,
-  power below 1.000 W is off and power at or above 1.000 W is on. During operation, power must rise
-  above the on threshold to change on or fall below the off threshold to change off.</p>
+  <p>These settings apply to all four outlets and are saved across restarts.
+  A load must rise above the on threshold for a restored alert, including at
+  startup, and fall below the off threshold for a lost alert. Averaging and
+  confirmation are applied in both cases.</p>
   <table>
     <tr><th>Send SMS</th><th>Output</th></tr>
     <tr><td><pre>OnThreshold=1.2</pre></td><td><pre>OK OnThreshold=1.200</pre></td></tr>
@@ -359,9 +385,12 @@ HBD=0.000</pre></td>
   <h2>Device Power Alerts</h2>
   <p>The monitor averages five active-power readings independently per outlet, uses the universal
   on/off thresholds, and confirms a change for three consecutive averaged readings before sending
-  an alert. Startup uses 1.000 W and initializes silently. Negative active-power readings are
-  reported as zero. Intentional outlet-off periods reset the monitoring baseline and do not
-  generate these alerts.</p>
+  an alert. A connected load at startup is also reported after confirmation;
+  it is not silently treated as an initial baseline. Negative active-power readings
+  are reported as zero. Intentional relay OFF/ON and reboot commands do not
+  generate load alerts: monitoring settles quietly after actual relay changes.
+  Later load changes on an already-enabled relay are reported normally. An ON
+  command on an already-ON relay does not reset monitoring. This applies to any appliance.</p>
   <table>
     <tr><th>Output</th></tr>
     <tr>

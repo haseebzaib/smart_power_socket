@@ -8,6 +8,16 @@ All command names are case-insensitive. Numeric arguments are not case-sensitive
 
 Requests the main status report, followed by the outlet report.
 
+All command replies and alerts use a shared outgoing SMS queue. Failed or
+blocked messages retry when registered and after the 60-second failure cooldown.
+Each message is tracked independently: an accepted first part is not deliberately
+resent when a later part fails. Commands execute once; outgoing-message retries
+do not repeat relay switching, calibration or settings writes.
+The RAM queue holds 24 messages. Incoming command polling pauses unless there is
+room for the largest current command response (four messages), leaving further
+commands on modem/SIM storage until capacity returns. RAM messages do not survive
+a reboot. See [SMS reply reliability](SMS_reply_reliability.md).
+
 Example:
 
 ```text
@@ -48,6 +58,45 @@ Fields:
 - `Batt`: battery voltage.
 - `HBD`: heartbeat interval in days.
 - `UpDays`: firmware uptime in days.
+
+### `gethwinfo`
+
+Returns one compact hardware/runtime summary SMS. Case-insensitive; no arguments.
+
+```text
+gethwinfo
+```
+
+Example:
+
+```text
+HW=nRF54L15 FW=001.00
+CPUavg=6.3%
+Up=12345s
+Stack% M=28 L=44 Max=78
+HeapB=2048/4096
+Threads=7 IRQsize=4096B
+Reset=PIN
+SMSQ=2/24
+```
+
+- `HW` / `FW`: processor and firmware version.
+- `CPUavg`: scheduler-measured busy CPU percentage averaged since boot, not an
+  instantaneous load measurement. Unavailable statistics show N/A.
+- `Up`: kernel uptime in seconds.
+- `Stack%`: stack high-water usage percentages: M = main, L = logging,
+  Max = highest observed thread-stack percentage. These are peak usage since
+  boot, not current live-stack sizes. N/A means the stack could not be queried.
+- `HeapB`: Newlib malloc arena used/free bytes. Free means free within the
+  allocator's acquired arena, not all unused device RAM.
+- `Threads`: number of threads observed; `IRQsize`: configured interrupt-stack
+  capacity in bytes, not measured interrupt-stack usage.
+- `Reset`: primary recorded boot reset cause: PIN, SW, WDT, LOCKUP, DEBUG,
+  OTHER, UNCLASS (no classified cause) or N/A. Full flags remain in RTT logs.
+- `SMSQ`: pending outgoing messages / queue capacity, before this reply is added.
+
+The reply is bounded to 160 characters and uses the shared retry outbox. Full
+per-thread and interrupt-stack usage remains available in periodic RTT logs.
 
 ### `getcellularinfo`
 
@@ -249,10 +298,11 @@ The heartbeat uses the normal status and outlet-report payloads with an `SPS Hea
 The thresholds are universal: one setting applies to all four outlets. Values are in watts and
 are saved to flash.
 
-At startup, an outlet below `1.000 W` is initialized off and an outlet at or above `1.000 W` is
-initialized on, without generating an alert. At runtime, an off outlet must rise above
-`OnThreshold` to change on, and an on outlet must fall below `OffThreshold` to change off. Between
-the two thresholds the previous state is retained.
+At startup and during operation, a load above `OnThreshold` goes through the
+same averaging and confirmation checks before Device power restored is queued.
+A connected load must fall below `OffThreshold` to queue Device power lost.
+Between the thresholds, the previous established state is retained. A detected
+initial connected load is not silently absorbed as a startup baseline.
 
 Defaults:
 
@@ -397,14 +447,24 @@ After this alert, the device sends the outlet report.
 
 ### Device Power Lost/Restored
 
-Sent per outlet when a load/device unexpectedly disconnects or reconnects while utility and that
-outlet's relay are ON. Intentional `DeviceOff`, `DeviceOn`, and relay-off periods reset the
-monitoring baseline and do not produce device power lost/restored alerts.
+Queued per outlet when a load/device is detected, disconnects or reconnects
+while utility and that outlet's relay are ON. This applies to any appliance.
+Intentional relay OFF/ON and outlet reboot commands do not generate load
+lost/restored alerts. After an actual command-driven relay change, the monitor
+settles from five fresh readings without sending a load alert. Later load
+changes on that already-enabled relay use the normal confirmation rules.
+An ON command for an already-ON relay does not reset monitoring. Utility
+restoration can still produce a confirmed connected-load notification.
 
 The monitor averages five active-power readings independently for each outlet. The universal on
 and off thresholds provide hysteresis, and a state change must remain valid for three consecutive
 averaged readings before an alert is sent. Negative active-power readings are treated and
 reported as zero.
+
+The five-reading window is used for averaging, not silent startup suppression.
+An initial connected load must satisfy three consecutive averaged readings
+above `OnThreshold`, just like a later connection. An empty initial outlet does
+not generate a loss alert. Logs identify confirmed load events and queued SMS IDs.
 
 ```text
 Alert=Device power lost

@@ -7,10 +7,12 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <malloc.h>
 #include <string_view>
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/drivers/hwinfo.h>
 
 #include "app_config.hpp"
 
@@ -31,6 +33,7 @@ namespace sms_commands
     void handle_get_status(const context &ctx,
                            std::string_view sender,
                            std::string_view body);
+    void handle_get_hw_info(const context &ctx, std::string_view sender, std::string_view body);
     void handle_set_heart_beat_days(const context &ctx,
                                     std::string_view sender,
                                     std::string_view body);
@@ -75,8 +78,9 @@ namespace sms_commands
                                   std::string_view sender,
                                   std::string_view body);
 
-    constexpr std::array<commandDefinition, 17> commands = {{
+    constexpr std::array<commandDefinition, 18> commands = {{
         {"getStatus", handle_get_status},
+        {"gethwinfo", handle_get_hw_info},
         {"getcellularinfo", handle_get_cellular_info},
         {"SetHeartBeatDays", handle_set_heart_beat_days},
         {"DeviceOn", handle_device_on},
@@ -435,6 +439,7 @@ namespace sms_commands
         LOG_INF("Relay %u switch begin: %s (GPIO %d -> %d)", static_cast<unsigned>(outletIndex + 1),
                 on ? "ON" : "OFF", previous, desired);
         const int ret = ctx.relays[outletIndex]->set(desired);
+        if (ret == 0) ++ctx.relayChangeSequence[outletIndex];
         LOG_INF("Relay %u switch complete: ret=%d", static_cast<unsigned>(outletIndex + 1), ret);
         return ret;
     }
@@ -553,23 +558,19 @@ namespace sms_commands
                                             ctx.batteryMillivolts);
     }
 
-    bool send_outlet_report(const context &ctx, std::string_view recipient, const device_status::snapshot &status)
-    {
-        std::array<char, 160> outletReport{};
-        int outletLen = device_status::format_outlet_report(status, outletReport.data(), outletReport.size());
-        if (outletLen <= 0 || static_cast<std::size_t>(outletLen) >= outletReport.size())
-        {
-            LOG_ERR("outlet report formatting failed");
-            return false;
-        }
-
-        return ctx.modem.send_sms(recipient,
-                                  std::string_view{outletReport.data(), static_cast<std::size_t>(outletLen)});
-    }
-
     bool send_status(const context &ctx, std::string_view recipient, std::string_view heading)
     {
+        if (!ctx.modem.can_queue_sms(2)) return false;
         device_status::snapshot status = make_status_snapshot(ctx);
+
+        std::array<char, 160> outletReport{};
+        const int outletLength = device_status::format_outlet_report(
+            status, outletReport.data(), outletReport.size());
+        if (outletLength <= 0 || static_cast<std::size_t>(outletLength) >= outletReport.size())
+        {
+            LOG_ERR("status outlet report formatting failed; neither part queued");
+            return false;
+        }
 
         std::array<char, 192> statusText{};
         int statusLen = device_status::format_status_message(status, statusText.data(), statusText.size());
@@ -595,7 +596,7 @@ namespace sms_commands
                 return false;
             }
 
-            return send_outlet_report(ctx, recipient, status);
+            return ctx.modem.send_sms(recipient, std::string_view{outletReport.data(), static_cast<std::size_t>(outletLength)});
         }
 
         std::array<char, 192> response{};
@@ -621,7 +622,7 @@ namespace sms_commands
             return false;
         }
 
-        return send_outlet_report(ctx, recipient, status);
+        return ctx.modem.send_sms(recipient, std::string_view{outletReport.data(), static_cast<std::size_t>(outletLength)});
     }
 
     bool send_alert(const context &ctx,
@@ -629,7 +630,20 @@ namespace sms_commands
                     std::string_view alert,
                     bool includeOutletReport)
     {
+        if (!ctx.modem.can_queue_sms(includeOutletReport ? 2 : 1)) return false;
         device_status::snapshot status = make_status_snapshot(ctx);
+
+        std::array<char, 160> outletReport{};
+        int outletLength = 0;
+        if (includeOutletReport)
+        {
+            outletLength = device_status::format_outlet_report(status, outletReport.data(), outletReport.size());
+            if (outletLength <= 0 || static_cast<std::size_t>(outletLength) >= outletReport.size())
+            {
+                LOG_ERR("alert outlet report formatting failed; neither part queued");
+                return false;
+            }
+        }
 
         std::array<char, 256> alertText{};
         int alertLen = device_status::format_alert_message(status,
@@ -651,7 +665,7 @@ namespace sms_commands
             return alertSent;
         }
 
-        return send_outlet_report(ctx, recipient, status);
+        return ctx.modem.send_sms(recipient, std::string_view{outletReport.data(), static_cast<std::size_t>(outletLength)});
     }
 
     bool send_device_alert(const context &ctx,
@@ -943,6 +957,76 @@ namespace sms_commands
         }
     }
 
+    void handle_get_hw_info(const context &ctx, std::string_view sender, std::string_view)
+    {
+        struct stackSummary
+        {
+            unsigned threads = 0;
+            int mainPercent = -1;
+            int logPercent = -1;
+            int maxPercent = -1;
+            k_tid_t mainThread = k_current_get();
+        } stacks;
+        k_thread_foreach_unlocked([](const k_thread *thread, void *arg) {
+            auto &summary = *static_cast<stackSummary *>(arg);
+            ++summary.threads;
+            size_t unused = 0;
+            const size_t size = thread->stack_info.size;
+            if (size == 0 || k_thread_stack_space_get(thread, &unused) != 0 || unused > size) return;
+            const int percent = static_cast<int>((size - unused) * 100U / size);
+            summary.maxPercent = std::max(summary.maxPercent, percent);
+            if (thread == summary.mainThread) summary.mainPercent = percent;
+            const char *name = k_thread_name_get(const_cast<k_thread *>(thread));
+            if (name && std::string_view{name} == "logging") summary.logPercent = percent;
+        }, &stacks);
+
+        std::array<char, 10> cpu{};
+        k_thread_runtime_stats_t runtime{};
+        if (k_thread_runtime_stats_cpu_get(0, &runtime) == 0 && runtime.execution_cycles > 0)
+        {
+            // Floating arithmetic avoids counter multiplication overflow. Output
+            // remains integer-formatted, without requiring float printf support.
+            const unsigned tenthPercent = static_cast<unsigned>(std::min(1000.0,
+                static_cast<double>(runtime.total_cycles) * 1000.0 /
+                    static_cast<double>(runtime.execution_cycles) + 0.5));
+            std::snprintf(cpu.data(), cpu.size(), "%u.%u%%", tenthPercent / 10U, tenthPercent % 10U);
+        }
+        else std::snprintf(cpu.data(), cpu.size(), "N/A");
+
+        auto stackText = [](int value) {
+            std::array<char, 5> text{};
+            if (value >= 0) std::snprintf(text.data(), text.size(), "%d", value);
+            else std::snprintf(text.data(), text.size(), "N/A");
+            return text;
+        };
+        const auto mainStack = stackText(stacks.mainPercent);
+        const auto logStack = stackText(stacks.logPercent);
+        const auto maxStack = stackText(stacks.maxPercent);
+        const auto heap = mallinfo();
+        const uint32_t reset = ctx.bootResetCause;
+        const char *reason = !ctx.bootResetCauseValid ? "N/A" :
+            reset == 0 ? "UNCLASS" : reset & RESET_WATCHDOG ? "WDT" :
+            reset & RESET_CPU_LOCKUP ? "LOCKUP" : reset & RESET_SOFTWARE ? "SW" :
+            reset & RESET_PIN ? "PIN" : reset & RESET_DEBUG ? "DEBUG" : "OTHER";
+
+        std::array<char, 161> response{};
+        const int length = std::snprintf(response.data(), response.size(),
+            "HW=nRF54L15 FW=%.8s\nCPUavg=%s\nUp=%llus\nStack%% M=%s L=%s Max=%s\n"
+            "HeapB=%u/%u\nThreads=%u IRQsize=%uB\nReset=%s\nSMSQ=%u/%u",
+            device_status::firmwareVersion.data(), cpu.data(),
+            static_cast<unsigned long long>(k_uptime_get() / 1000), mainStack.data(), logStack.data(), maxStack.data(),
+            static_cast<unsigned>(heap.uordblks), static_cast<unsigned>(heap.fordblks), stacks.threads,
+            static_cast<unsigned>(CONFIG_ISR_STACK_SIZE), reason,
+            static_cast<unsigned>(ctx.modem.sms_pending_count()),
+            static_cast<unsigned>(ctx.modem.sms_outbox_capacity()));
+        if (length <= 0 || static_cast<std::size_t>(length) >= response.size())
+        {
+            send_command_ack(ctx, sender, "ERR gethwinfo format");
+            return;
+        }
+        ctx.modem.send_sms(sender, std::string_view{response.data(), static_cast<std::size_t>(length)});
+    }
+
     void handle_get_status(const context &ctx,
                            std::string_view sender,
                            std::string_view)
@@ -1134,8 +1218,8 @@ namespace sms_commands
             saveRet != 0 ? (on ? "ERR DeviceOn save" : "ERR DeviceOff save") :
             (on ? "OK DeviceOn" : "OK DeviceOff");
         LOG_INF("%s: persistence complete ret=%d; SMS reply begin", command, saveRet);
-        const bool sent = send_command_ack(ctx, sender, reply);
-        LOG_INF("%s: SMS reply complete sent=%u", command, static_cast<unsigned>(sent));
+        const bool queued = send_command_ack(ctx, sender, reply);
+        LOG_INF("%s: SMS reply queued=%u", command, static_cast<unsigned>(queued));
     }
 
     void handle_device_on(const context &ctx,

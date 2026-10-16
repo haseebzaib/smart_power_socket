@@ -12,6 +12,7 @@ namespace alerts
 {
     void devicePowerMonitor::outletTracker::reset()
     {
+        // Relay-change identity/settling survives sample resets during an outage.
         activePowerMw.fill(0);
         nextSample = 0;
         sampleCount = 0;
@@ -67,15 +68,15 @@ namespace alerts
                 return false;
             }
 
-            const bool sent = sms_commands::send_alert(ctx,
+            const bool queued = sms_commands::send_alert(ctx,
                                                         recipient,
                                                         "Utility power restored",
                                                         true);
-            if (sent)
+            if (queued)
             {
                 lastState_ = state::On;
             }
-            return sent;
+            return queued;
         }
 
         // The optocoupler observes AC before the fuse; metering observes
@@ -92,15 +93,15 @@ namespace alerts
                 return false;
             }
 
-            const bool sent = sms_commands::send_alert(ctx,
+            const bool queued = sms_commands::send_alert(ctx,
                                                         recipient,
                                                         "Utility power lost - fuse probably blown",
                                                         false);
-            if (sent)
+            if (queued)
             {
                 lastState_ = state::FuseSuspected;
             }
-            return sent;
+            return queued;
         }
 
         fuseCandidateCount_ = 0;
@@ -110,19 +111,30 @@ namespace alerts
             return false;
         }
 
-        const bool sent = sms_commands::send_alert(ctx,
+        const bool queued = sms_commands::send_alert(ctx,
                                                     recipient,
                                                     "Utility power lost",
                                                     false);
-        if (sent)
+        if (queued)
         {
             lastState_ = state::Off;
         }
-        return sent;
+        return queued;
     }
 
     bool devicePowerMonitor::process(const sms_commands::context &ctx, std::string_view recipient)
     {
+        for (std::size_t i = 0; i < outlets_.size(); ++i)
+        {
+            auto &outlet = outlets_[i];
+            if (outlet.observedRelaySequence != ctx.relayChangeSequence[i])
+            {
+                outlet.reset();
+                outlet.observedRelaySequence = ctx.relayChangeSequence[i];
+                outlet.settleIntentionalRelayChange = true;
+                ctx.monitoredLoadStateValid[i] = false;
+            }
+        }
         if (!device_status::utility_on(ctx.measurements))
         {
             for (std::size_t i = 0; i < outlets_.size(); ++i)
@@ -134,7 +146,7 @@ namespace alerts
             return false;
         }
 
-        bool anySent = false;
+        bool anyQueued = false;
 
         for (std::size_t i = 0; i < device_status::outletCount; ++i)
         {
@@ -144,11 +156,11 @@ namespace alerts
                 device_status::outlet_on(*ctx.relays[i]);
 
             // An unpowered outlet cannot have an unexpected device power loss.
-            // Reset its baseline so an intentional DeviceOff/DeviceOn cycle
-            // does not generate either a false "lost" or "restored" alert.
+            // Intentional relay changes must not masquerade as load events.
             if (!relayOn)
             {
                 outlets_[i].reset();
+                outlets_[i].settleIntentionalRelayChange = true;
                 ctx.monitoredLoadConnected[i] = false;
                 ctx.monitoredLoadStateValid[i] = true;
                 continue;
@@ -168,15 +180,27 @@ namespace alerts
 
             const int32_t averageActivePowerMw = outlet.average_active_power_mw();
 
-            if (outlet.lastState == state::Unknown)
+            if (outlet.settleIntentionalRelayChange)
             {
-                outlet.lastState =
-                    averageActivePowerMw >= static_cast<int32_t>(app_config::startupThresholdMw)
-                        ? state::Connected
-                        : state::Disconnected;
+                outlet.lastState = averageActivePowerMw > static_cast<int32_t>(app_config::on_threshold_mw())
+                    ? state::Connected : state::Disconnected;
+                outlet.settleIntentionalRelayChange = false;
                 ctx.monitoredLoadConnected[i] = outlet.lastState == state::Connected;
                 ctx.monitoredLoadStateValid[i] = true;
+                LOG_INF("Load monitor outlet %u settled after intentional relay change; load alert suppressed",
+                        static_cast<unsigned>(i + 1));
                 continue;
+            }
+
+            // Empty startup state needs no "lost" notification. A present load
+            // follows the same threshold/confirmation path as later connections;
+            // never silently absorb it as an initial connected baseline.
+            if (outlet.lastState == state::Unknown &&
+                averageActivePowerMw <= static_cast<int32_t>(app_config::on_threshold_mw()))
+            {
+                outlet.lastState = state::Disconnected;
+                ctx.monitoredLoadConnected[i] = false;
+                ctx.monitoredLoadStateValid[i] = true;
             }
 
             state candidate = state::Unknown;
@@ -185,7 +209,7 @@ namespace alerts
             {
                 candidate = state::Disconnected;
             }
-            else if (outlet.lastState == state::Disconnected &&
+            else if ((outlet.lastState == state::Disconnected || outlet.lastState == state::Unknown) &&
                      averageActivePowerMw > static_cast<int32_t>(app_config::on_threshold_mw()))
             {
                 candidate = state::Connected;
@@ -215,19 +239,27 @@ namespace alerts
 
             const char *alert =
                 candidate == state::Connected ? "Device power restored" : "Device power lost";
-            bool sent = sms_commands::send_device_alert(ctx, recipient, alert, i);
-            if (sent)
+            const bool sendAvailable = ctx.modem.can_queue_sms();
+            if (sendAvailable)
+                LOG_INF("Load monitor outlet %u queue confirmed %s: average=%d mW on=%u off=%u mW",
+                        static_cast<unsigned>(i + 1), alert, averageActivePowerMw,
+                        app_config::on_threshold_mw(), app_config::off_threshold_mw());
+            bool queued = sms_commands::send_device_alert(ctx, recipient, alert, i);
+            if (!queued && sendAvailable)
+                LOG_WRN("Load monitor outlet %u alert could not be queued; confirmed transition will be retried while it remains present",
+                        static_cast<unsigned>(i + 1));
+            if (queued)
             {
                 outlet.lastState = candidate;
                 ctx.monitoredLoadConnected[i] = candidate == state::Connected;
                 ctx.monitoredLoadStateValid[i] = true;
                 outlet.candidateState = state::Unknown;
                 outlet.candidateCount = 0;
-                anySent = true;
+                anyQueued = true;
             }
         }
 
-        return anySent;
+        return anyQueued;
     }
 
     bool frequencyMonitor::process(const sms_commands::context &ctx, std::string_view recipient)
@@ -253,41 +285,41 @@ namespace alerts
                 return false;
             }
 
-            bool sent = sms_commands::send_frequency_alert(ctx,
+            bool queued = sms_commands::send_frequency_alert(ctx,
                                                            recipient,
                                                            "Frequency bad",
                                                            frequencyCentihz);
-            if (sent)
+            if (queued)
             {
                 lastState_ = state::Bad;
             }
-            return sent;
+            return queued;
         }
 
         if (lastState_ == state::Good && bad)
         {
-            bool sent = sms_commands::send_frequency_alert(ctx,
+            bool queued = sms_commands::send_frequency_alert(ctx,
                                                            recipient,
                                                            "Frequency bad",
                                                            frequencyCentihz);
-            if (sent)
+            if (queued)
             {
                 lastState_ = state::Bad;
             }
-            return sent;
+            return queued;
         }
 
         if (lastState_ == state::Bad && !bad)
         {
-            bool sent = sms_commands::send_frequency_alert(ctx,
+            bool queued = sms_commands::send_frequency_alert(ctx,
                                                            recipient,
                                                            "Frequency restored",
                                                            frequencyCentihz);
-            if (sent)
+            if (queued)
             {
                 lastState_ = state::Good;
             }
-            return sent;
+            return queued;
         }
 
         return false;
@@ -301,7 +333,7 @@ namespace alerts
             return false;
         }
 
-        bool anySent = false;
+        bool anyQueued = false;
 
         for (std::size_t i = 0; i < device_status::outletCount; ++i)
         {
@@ -329,47 +361,47 @@ namespace alerts
                     continue;
                 }
 
-                bool sent = sms_commands::send_power_factor_alert(ctx,
+                bool queued = sms_commands::send_power_factor_alert(ctx,
                                                                   recipient,
                                                                   "Power factor bad",
                                                                   i);
-                if (sent)
+                if (queued)
                 {
                     lastState_[i] = state::Bad;
-                    anySent = true;
+                    anyQueued = true;
                 }
                 continue;
             }
 
             if (lastState_[i] == state::Good && bad)
             {
-                bool sent = sms_commands::send_power_factor_alert(ctx,
+                bool queued = sms_commands::send_power_factor_alert(ctx,
                                                                   recipient,
                                                                   "Power factor bad",
                                                                   i);
-                if (sent)
+                if (queued)
                 {
                     lastState_[i] = state::Bad;
-                    anySent = true;
+                    anyQueued = true;
                 }
                 continue;
             }
 
             if (lastState_[i] == state::Bad && restored)
             {
-                bool sent = sms_commands::send_power_factor_alert(ctx,
+                bool queued = sms_commands::send_power_factor_alert(ctx,
                                                                   recipient,
                                                                   "Power factor restored",
                                                                   i);
-                if (sent)
+                if (queued)
                 {
                     lastState_[i] = state::Good;
-                    anySent = true;
+                    anyQueued = true;
                 }
             }
         }
 
-        return anySent;
+        return anyQueued;
     }
 
     void powerFactorMonitor::reset()

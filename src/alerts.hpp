@@ -54,6 +54,8 @@ namespace alerts
             state lastState = state::Unknown;
             state candidateState = state::Unknown;
             uint8_t candidateCount = 0;
+            uint32_t observedRelaySequence = 0;
+            bool settleIntentionalRelayChange = false;
 
             void reset();
             void add(int32_t activePower);

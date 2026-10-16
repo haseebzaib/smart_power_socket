@@ -28,9 +28,14 @@ namespace sms_commands
         int64_t &nextHeartbeatMs;
         uint32_t batteryMillivolts;
         bool inputAcPresent = false;
+        std::span<uint32_t, device_status::outletCount> relayChangeSequence;
+        uint32_t bootResetCause = 0;
+        bool bootResetCauseValid = false;
     };
 
     void handle(const context &ctx);
+    // GetOutletData and calibration-all each produce at most one reply per outlet.
+    constexpr std::size_t maxCommandReplyMessages = device_status::outletCount;
     bool send_status(const context &ctx, std::string_view recipient, std::string_view heading = {});
     bool send_alert(const context &ctx,
                     std::string_view recipient,

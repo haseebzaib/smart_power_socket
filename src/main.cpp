@@ -188,6 +188,7 @@ std::array<int64_t, 4> nextEnergyMeterRetryMs;
 std::array<sensors::hlw811x::measurements, 4> acMeasurements;
 std::array<bool, device_status::outletCount> monitoredLoadConnected{};
 std::array<bool, device_status::outletCount> monitoredLoadStateValid{};
+std::array<uint32_t, device_status::outletCount> relayChangeSequence{};
 std::array<hardware::gpioCon *, device_status::outletCount> outletRelays = {{
 	&relay1,
 	&relay2,
@@ -298,7 +299,7 @@ int main(void)
 	LOG_INF("Modem init ret: %d", modemInitRet);
 
 	cellular::sim7080::modemInformation sim7080Information{};
-	bool startupStatusSent = false;
+	bool startupStatusQueued = false;
 	int64_t nextStartupStatusAttemptMs = 0;
 
 	while (1)
@@ -389,7 +390,7 @@ int main(void)
 			}
 		}
 
-		modemSim7080.loop(sim7080Information);
+		modemSim7080.loop(sim7080Information, modemSim7080.can_queue_sms(sms_commands::maxCommandReplyMessages));
 
 		LOG_INF("#########Sim7080Information#########");
 		LOG_INF("ModelIdentification: %s", sim7080Information.modelIdentification.data());
@@ -419,37 +420,49 @@ int main(void)
 			.nextHeartbeatMs = nextHeartbeatMs,
 			.batteryMillivolts = batteryMillivolts,
 			.inputAcPresent = input_ac_present(),
+			.relayChangeSequence = std::span<uint32_t, device_status::outletCount>{relayChangeSequence},
+			.bootResetCause = resetCause,
+			.bootResetCauseValid = resetRet == 0,
 		};
 
-		if (!startupStatusSent &&
+		// Command admission reserved enough free slots for its entire reply group.
+		// Execute once before background producers can use those slots.
+		if (sim7080Information.smsReceived)
+		{
+			LOG_INF("smsNumber: %s", sim7080Information.smsNumber.data());
+			LOG_INF("smsBody: %s", sim7080Information.smsBody.data());
+			sms_commands::handle(smsContext);
+		}
+		modemSim7080.process_sms_outbox();
+
+		if (!startupStatusQueued &&
 			sms_network_ready(sim7080Information) &&
 			k_uptime_get() >= nextStartupStatusAttemptMs)
 		{
-			startupStatusSent = sms_commands::send_status(smsContext, alert_number, "SPS is starting");
-			if (!startupStatusSent)
+			startupStatusQueued = sms_commands::send_status(smsContext, alert_number, "SPS is starting");
+			if (!startupStatusQueued)
 			{
 				nextStartupStatusAttemptMs = k_uptime_get() + startupStatusRetryIntervalMs;
-				LOG_WRN("Startup status failed; retrying in %lld seconds",
+				LOG_WRN("Startup status could not be queued; retrying in %lld seconds",
 						static_cast<long long>(startupStatusRetryIntervalMs / 1000));
 			}
 		}
 
-		if (sms_network_ready(sim7080Information))
+		// Detect events even while unregistered; the shared outbox waits for
+		// network recovery before attempting submission.
+		utilityPowerAlerts.process(smsContext, alert_number);
+		devicePowerAlerts.process(smsContext, alert_number);
+		frequencyAlerts.process(smsContext, alert_number);
+		if (app_config::power_factor_alerts_enabled())
 		{
-			utilityPowerAlerts.process(smsContext, alert_number);
-			devicePowerAlerts.process(smsContext, alert_number);
-			frequencyAlerts.process(smsContext, alert_number);
-			if (app_config::power_factor_alerts_enabled())
-			{
-				powerFactorAlerts.process(smsContext, alert_number);
-			}
-			else
-			{
-				powerFactorAlerts.reset();
-			}
+			powerFactorAlerts.process(smsContext, alert_number);
+		}
+		else
+		{
+			powerFactorAlerts.reset();
 		}
 
-		if (startupStatusSent &&
+		if (startupStatusQueued &&
 			sms_network_ready(sim7080Information) &&
 			heartBeatDaysMilli > 0U &&
 			nextHeartbeatMs > 0 &&
@@ -463,12 +476,7 @@ int main(void)
 			}
 		}
 
-		if (sim7080Information.smsReceived)
-		{
-			LOG_INF("smsNumber: %s", sim7080Information.smsNumber.data());
-			LOG_INF("smsBody: %s", sim7080Information.smsBody.data());
-			sms_commands::handle(smsContext);
-		}
+		modemSim7080.process_sms_outbox();
 		LOG_INF("#########END#########");
 
 		k_msleep(500);

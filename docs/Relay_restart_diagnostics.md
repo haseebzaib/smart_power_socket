@@ -54,11 +54,11 @@ Settings write begin: sps/relay
 Settings readback begin: sps/relay
 Settings persisted and verified: sps/relay (8 bytes)
 DeviceOff: persistence complete ret=0; SMS reply begin
-DeviceOff: SMS reply complete sent=1
+DeviceOff: SMS reply queued=1
 ```
 
 Now repeat the exact same valid command. The logs should show both
-`GPIO write skipped` and `flash access skipped`, then an SMS reply. If the
+`GPIO write skipped` and `flash access skipped`, then an SMS reply queued for submission. If the
 restart persists on that path, the command's relay write and flash-save stages
 were bypassed; inspect the remaining command/SMS path and reset diagnostics.
 If it only happens for a changed mask, the stage logs narrow where execution
