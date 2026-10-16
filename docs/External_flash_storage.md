@@ -13,28 +13,29 @@ Addresses below are offsets within the external flash chip.
 
 | Partition | Offset | Size | Use |
 | --- | --- | --- | --- |
-| `ota_image_a` | `0x000000` | `0x100000` (1 MiB) | Reserved future firmware image A |
-| `ota_image_b` | `0x100000` | `0x100000` (1 MiB) | Reserved future firmware image B |
-| `ota_growth_reserve` | `0x200000` | `0x200000` (2 MiB) | Unused space reserved for future layout changes |
-| `settings_storage` | `0x400000` | `0x010000` (64 KiB) | Active settings/calibration NVS |
+| `mcuboot_secondary` (A) | `0x000000` | `0x100000` (1 MiB) | Signed update staging and native MCUboot swap storage |
+| `ota_image_b` (B) | `0x100000` | `0x100000` (1 MiB) | Previous known-good signed image, retained for lifetime rollback |
+| `mcuboot_scratch` | `0x200000` | `0x002000` (8 KiB) | Native MCUboot swap scratch |
+| `nvs_storage` | `0x202000` | `0x002000` (8 KiB) | Separate boot-policy journal: watchdog streak and backup/recovery metadata |
+| `ota_growth_reserve` | `0x204000` | `0x1fc000` | Unused growth reserve |
+| `settings_storage` | `0x400000` | `0x010000` (64 KiB) | Existing settings/calibration NVS, address unchanged |
 | `data_storage` | `0x410000` | `0x3f0000` | Reserved future application data |
 
-The settings area uses sixteen 4 KiB erase sectors. The board configuration
-sets the SPI NOR page layout to 4 KiB, avoiding the driver's default 64 KiB
-layout, which exceeds the settings backend's supported sector size.
+The settings area uses sixteen 4 KiB sectors; the boot-policy journal uses two
+separate 4 KiB sectors. Its record has its own CRC. Global NVS data CRC remains
+disabled to preserve the existing settings format. SPI NOR page layout stays
+at 4 KiB, avoiding the default 64 KiB layout that NVS cannot use here.
 
-Each firmware image area is 1 MiB (1,048,576 bytes). The stored OTA image,
-including any headers/metadata, must fit within that limit as features such as
-BLE are added. This is smaller than the previous 2 MiB per image. The freed
-2 MiB stays reserved so settings and application-data addresses remain stable.
-If firmware later exceeds 1 MiB, revise the OTA layout before enabling updates.
+The internal primary slot is also 1 MiB. Application execution remains internal;
+external A/B are storage, not directly executable slots. The signed update file
+limit is 0xfc000 bytes, including header/payload/TLVs, with 16 KiB conservatively
+reserved for swap metadata. MCUboot uses A to swap into the internal primary;
+B retains the previous healthy version until the next update begins.
 
-The A/B areas only reserve storage: downloading, signature verification,
-MCUboot integration and activation of an updated image are future work.
-The application still executes from internal RRAM. Future OTA design must
-account for the internal executable image and bootloader layout; these two
-external areas are not automatically bootable MCUboot slots. Settings and
-future application data occupy separate areas from both firmware images.
+See [FOTA_Setup.md](FOTA_Setup.md) for the update-writer API, signing, watchdog
+policy, build/artifact paths and hardware test procedure. HTTP and BLE transfer
+and remote update commands are future work; MCUboot and local storage/recovery
+infrastructure are now implemented.
 
 ## Configuration
 
@@ -86,8 +87,12 @@ successful settings initialization or persistence.
 
 ## Internal storage
 
+MCUboot now occupies internal `0x000000..0x020000` (128 KiB). The 1 MiB primary
+slot starts at `0x020000`, with a 2 KiB header and application code at `0x020800`.
+The remaining internal area before the old settings reservation is unused.
+
 The former internal settings region at `0x15c000`, size `0x9000`, remains
-reserved as `unused_internal_storage`; the application limit stays `0x15c000`.
+reserved as `unused_internal_storage`.
 The firmware does not mount, read, migrate or write that internal settings area.
 Calibration and device settings are loaded and saved only through external NOR
 on this carrier. Internal RRAM still contains the executable firmware.
@@ -104,7 +109,8 @@ At startup, look for the storage device, offset, size and reserved areas:
 ```text
 External flash: MX25R6435FZNIL0, JEDEC=c2 28 17, capacity=8388608 bytes (8 MiB)
 Settings storage: device=<NOR device> offset=0x400000 size=0x10000
-Reserved OTA image A: device=<NOR device> offset=0x0 size=0x100000
+Reserved MCUboot staging A: device=<NOR device> offset=0x0 size=0x100000
+Reserved boot-policy journal: device=<NOR device> offset=0x202000 size=0x2000
 Reserved OTA image B: device=<NOR device> offset=0x100000 size=0x100000
 Reserved future data: device=<NOR device> offset=0x410000 size=0x3f0000
 Settings ready: loaded mask=0x0f calibration mask=0x0f
@@ -135,4 +141,5 @@ Saving when storage is unavailable returns an error rather than acknowledging
 successful persistence. A storage failure can leave runtime values changed;
 check the SMS error/logs before assuming a setting will survive reboot.
 
-No project build, flash operation or hardware validation was run for this change.
+The FOTA setup is built and checked with host simulations and artifact verification.
+No board flash operation or hardware validation has been performed.

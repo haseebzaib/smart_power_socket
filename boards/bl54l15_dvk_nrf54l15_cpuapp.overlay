@@ -6,8 +6,15 @@
 
 /* Move the settings label to NOR; leave the previous RRAM area unused. */
 /delete-node/ &storage_partition;
+/delete-node/ &slot1_partition;
+/delete-node/ &slot0_partition;
+&boot_partition { reg = <0x0 0x20000>; };
 &cpuapp_rram {
 	partitions {
+		slot0_partition: partition@20000 {
+			label = "image-0";
+			reg = <0x20000 0x100000>;
+		};
 		unused_internal_storage: partition@15c000 {
 			label = "unused-internal-storage";
 			reg = <0x15c000 0x9000>;
@@ -218,18 +225,26 @@
 		compatible = "fixed-partitions";
 		#address-cells = <1>;
 		#size-cells = <1>;
-		ota_image_a: partition@0 {
-			label = "ota-image-a";
+		slot1_partition: partition@0 {
+			label = "image-1";
 			reg = <0x000000 0x100000>;
 		};
 		ota_image_b: partition@100000 {
 			label = "ota-image-b";
 			reg = <0x100000 0x100000>;
 		};
+		scratch_partition: partition@200000 {
+			label = "image-scratch";
+			reg = <0x200000 0x2000>;
+		};
+		nvs_storage: partition@202000 {
+			label = "boot-control";
+			reg = <0x202000 0x2000>;
+		};
 		/* Keep persisted settings in place while reserving future growth. */
-		ota_growth_reserve: partition@200000 {
+		ota_growth_reserve: partition@204000 {
 			label = "ota-growth-reserve";
-			reg = <0x200000 0x200000>;
+			reg = <0x204000 0x1fc000>;
 		};
 		storage_partition: partition@400000 {
 			label = "settings-storage";
@@ -266,3 +281,6 @@
 		line-name = "FLASH_IO2_WP_N";
 	};
 };
+
+/* Shared 20-second hardware watchdog, handed from MCUboot to the application. */
+&wdt30 { status = "okay"; };

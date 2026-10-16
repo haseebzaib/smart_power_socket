@@ -100,6 +100,64 @@ Formatting uses Newlib nano-compatible integer formats. Older replies containing
 `Up=lus` and scrambled fields after uptime were a formatting bug, not real memory
 or stack readings.
 
+### `getotainfo`
+
+Returns one SMS with firmware-update/recovery status. Case-insensitive; no arguments.
+
+```text
+getotainfo
+```
+
+Example (illustrative):
+
+```text
+OTA
+Run=Internal
+From=Backup B
+Backup=Ready
+Health=OK/60s
+Boots=12 WDT=3
+Streak=0/3
+Recoveries=1
+Last=Watchdog
+Update=Idle
+```
+
+- `Run=Internal`: application execution always uses the internal primary slot.
+  External A stages updates; external B retains the known-good recovery image.
+- `From`: `Initial` is the first firmware observed by the history tracker;
+  `Updated` means a different signed image was observed (OTA or SWD);
+  `Backup B` means the current image was restored from B; `Unknown` means its
+  origin could not be read. This label survives normal reboots and healthy checks
+  until a different image is observed. It is not an executable external slot.
+- `Backup`: `Ready` means B's header, length and stored CRC pass a fresh readback
+  check; `None` means no backup has been provisioned; `Bad` means verification
+  failed. MCUboot performs cryptographic authentication before installation.
+- `Health`: `Wait/60s` while the current boot is being observed; `OK/60s` after
+  one minute of main-loop progress with initialized settings and verified backup.
+  The interval starts after the first completed loop, not at power-on.
+- `Boots`: cumulative application handoffs, including the first start and power
+  cycles. MCUboot's internal recovery housekeeping reboots are excluded.
+- `WDT`: cumulative hardware or Zephyr task-watchdog resets observed by the bootloader, including faults
+  before `main()`. `Streak` is the current consecutive failure count / limit.
+- `Recoveries`: completed restorations from B; `Last` is the most recent completed
+  recovery reason: `Watchdog`, `Image` (boot/image validation failure), or `None`.
+  These history fields persist after the health check clears `Streak`.
+- `Update`: `Idle`, `Download`, `Pending` (awaiting reboot), or `Recovery`.
+
+History is stored separately from the existing boot-policy record and external
+settings. Counters start when the updated MCUboot first runs, saturate at the
+32-bit limit, and are diagnostic counts rather than an atomic power-event audit.
+Firmware that predates this command cannot answer it after being restored;
+provision a backup containing this command for field diagnostics after rollback.
+The updated MCUboot must also be installed to record history; an application-only
+update with an older bootloader cannot populate the new history fields.
+
+The reply uses the generic SMS retry queue and is limited to 160 characters.
+Journal read/CRC errors return `OTA info unavailable; check boot journal logs`.
+Builds without MCUboot return `OTA not enabled in this firmware`. This command
+only reports status; it does not start an update or reset counters.
+
 ### `getcellularinfo`
 
 Replies to the sender in **one SMS** with the main cellular information.
@@ -622,3 +680,10 @@ frequency unavailable because the RC filter can suppress measurable edges.
 Frequency is diagnostic only; fuse/utility alert decisions remain based on
 AC presence and socket metering. Logs appear on state changes or roughly every
 10 seconds when the main loop reaches its input check.
+
+## Firmware updates
+
+The MCUboot/watchdog/update-storage foundation is described in
+[FOTA_Setup.md](FOTA_Setup.md). HTTP/BLE downloads and an update-trigger SMS command are not
+available yet. Existing relay commands retain their behavior; they do not
+request firmware updates or change the watchdog recovery policy.

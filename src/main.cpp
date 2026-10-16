@@ -24,6 +24,11 @@
 #include "sms_commands.hpp"
 #include "alerts.hpp"
 #include "app_config.hpp"
+#include "system/watchdog.hpp"
+#if defined(CONFIG_BOOTLOADER_MCUBOOT)
+#include "ota/firmware_update.hpp"
+#include "sps_boot.h"
+#endif
 
 LOG_MODULE_REGISTER(mainCpp, LOG_LEVEL_INF);
 
@@ -217,7 +222,15 @@ int main(void)
 {
 	const int64_t bootTimeMs = k_uptime_get();
 	uint32_t resetCause = 0;
-	const int resetRet = hwinfo_get_reset_cause(&resetCause);
+	int resetRet = hwinfo_get_reset_cause(&resetCause);
+#if defined(CONFIG_BOOTLOADER_MCUBOOT)
+    sps_boot_state bootState{};
+    if (sps_boot_state_load(&bootState) == 0)
+    {
+        resetCause = bootState.reset_cause;
+        resetRet = 0;
+    }
+#endif
 	if (resetRet == 0)
 	{
 		LOG_INF("Boot reset cause: 0x%08x pin=%u software=%u watchdog=%u lockup=%u debug=%u",
@@ -231,6 +244,10 @@ int main(void)
 	}
 	else
 		LOG_WRN("Reset cause unavailable: %d", resetRet);
+#if defined(CONFIG_BOOTLOADER_MCUBOOT)
+	const int firmwareUpdateRet = firmware_update::init();
+	LOG_INF("OTA init ret: %d", firmwareUpdateRet);
+#endif
 	const int appConfigRet = app_config::init();
 	LOG_INF("App config init ret: %d", appConfigRet);
 	heartBeatDaysMilli = app_config::heartbeat_days_milli();
@@ -304,6 +321,7 @@ int main(void)
 
 	while (1)
 	{
+		app_watchdog::progress();
 
 		for (uint8_t meter = 1; meter <= 4; ++meter)
 		{
@@ -385,6 +403,9 @@ int main(void)
 
 			if (!modemReady)
 			{
+#if defined(CONFIG_BOOTLOADER_MCUBOOT)
+				firmware_update::poll_health(appConfigRet == 0);
+#endif
 				k_msleep(500);
 				continue;
 			}
@@ -479,6 +500,9 @@ int main(void)
 		modemSim7080.process_sms_outbox();
 		LOG_INF("#########END#########");
 
+#if defined(CONFIG_BOOTLOADER_MCUBOOT)
+		firmware_update::poll_health(appConfigRet == 0);
+#endif
 		k_msleep(500);
 	}
 	return 0;

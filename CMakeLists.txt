@@ -27,3 +27,16 @@ target_include_directories(app PRIVATE
 	src/sensors/externalLibs/hlw811x
 	src/cellular/
 )
+
+if(CONFIG_BOOTLOADER_MCUBOOT)
+  if(NOT CONFIG_TASK_WDT)
+    message(FATAL_ERROR "The MCUboot carrier profile requires CONFIG_TASK_WDT. Include boards/bl54l15_dvk_nrf54l15_cpuapp.conf with prj.conf.")
+  endif()
+  target_sources(app PRIVATE
+    src/ota/firmware_update.cpp
+    modules/sps_boot/src/boot_storage.c
+    modules/sps_boot/src/watchdog_reset.c
+    src/system/watchdog.cpp
+  )
+  target_include_directories(app PRIVATE modules/sps_boot/src)
+endif()

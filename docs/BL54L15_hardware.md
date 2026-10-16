@@ -132,7 +132,9 @@ so firmware does not assign P1.09 or drive SWO for serial logging.
 
 Settings/NVS use the external NOR data partition at `0x400000` (64 KiB).
 The board-specific `pm_static_bl54l15_dvk_nrf54l15_cpuapp.yml` reserves two
-1 MiB OTA image areas, a 2 MiB growth reserve, and the remaining flash for future data. Existing
+1 MiB update/backup image areas, MCUboot scratch and boot-policy journal,
+a growth reserve, and the remaining flash for future data. MCUboot uses a 1 MiB
+internal primary slot and a 128 KiB bootloader; see [FOTA setup](FOTA_Setup.md). Existing
 internal settings area remains reserved and unused; firmware does not mount
 or migrate it. Fresh external storage uses defaults until settings are reapplied.
 See [external flash storage](External_flash_storage.md).

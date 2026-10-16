@@ -15,6 +15,9 @@
 #include <zephyr/drivers/hwinfo.h>
 
 #include "app_config.hpp"
+#if defined(CONFIG_BOOTLOADER_MCUBOOT)
+#include "ota/firmware_update.hpp"
+#endif
 
 LOG_MODULE_REGISTER(sms_commands, LOG_LEVEL_INF);
 
@@ -34,6 +37,7 @@ namespace sms_commands
                            std::string_view sender,
                            std::string_view body);
     void handle_get_hw_info(const context &ctx, std::string_view sender, std::string_view body);
+    void handle_get_ota_info(const context &ctx, std::string_view sender, std::string_view body);
     void handle_set_heart_beat_days(const context &ctx,
                                     std::string_view sender,
                                     std::string_view body);
@@ -78,9 +82,10 @@ namespace sms_commands
                                   std::string_view sender,
                                   std::string_view body);
 
-    constexpr std::array<commandDefinition, 18> commands = {{
+    constexpr std::array<commandDefinition, 19> commands = {{
         {"getStatus", handle_get_status},
         {"gethwinfo", handle_get_hw_info},
+        {"getotainfo", handle_get_ota_info},
         {"getcellularinfo", handle_get_cellular_info},
         {"SetHeartBeatDays", handle_set_heart_beat_days},
         {"DeviceOn", handle_device_on},
@@ -1033,6 +1038,23 @@ namespace sms_commands
             return;
         }
         ctx.modem.send_sms(sender, std::string_view{response.data(), static_cast<std::size_t>(length)});
+    }
+
+    void handle_get_ota_info(const context &ctx, std::string_view sender, std::string_view)
+    {
+#if defined(CONFIG_BOOTLOADER_MCUBOOT)
+        std::array<char, 161> response{};
+        int length = firmware_update::format_info(response);
+        if (length < 0)
+        {
+            LOG_ERR("getotainfo unavailable: %d", length);
+            send_command_ack(ctx, sender, "OTA info unavailable; check boot journal logs");
+            return;
+        }
+        ctx.modem.send_sms(sender, std::string_view{response.data(), static_cast<std::size_t>(length)});
+#else
+        send_command_ack(ctx, sender, "OTA not enabled in this firmware");
+#endif
     }
 
     void handle_get_status(const context &ctx,

@@ -1,3 +1,4 @@
+#include "system/watchdog.hpp"
 #include "at_engine.hpp"
 
 LOG_MODULE_REGISTER(at_engine, LOG_LEVEL_INF);
@@ -82,6 +83,20 @@ namespace cellular
         }
     }
 
+    void atEngine::wait_for_completion(uint32_t timeoutMs, bool prompt)
+    {
+        app_watchdog::operation allowance{
+            static_cast<uint64_t>(timeoutMs) + app_watchdog::commandMarginMs,
+            prompt ? "modem prompt" : "modem response"};
+        const int64_t deadline = k_uptime_get() + timeoutMs;
+        while (!currentCommand.done && (!prompt || !promptSeen) && k_uptime_get() < deadline)
+        {
+            processRx();
+            if (currentCommand.done || (prompt && promptSeen)) break;
+            k_msleep(1);
+        }
+    }
+
     atEngine::atResult atEngine::send_command(std::string_view command, uint32_t timeoutMs)
     {
         currentCommand.active = true;
@@ -97,23 +112,11 @@ namespace cellular
 
         LOG_INF("SendCmd: %s", command.data());
 
-        uint32_t tick = 0;
         std::span<const uint8_t> bytes = std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(command.data()), command.size());
 
         uart_.writeIntr(bytes);
 
-        while (tick < timeoutMs)
-        {
-            processRx(); // process the response
-
-            if (currentCommand.done)
-            {
-                break;
-            }
-
-            tick++;
-            k_msleep(1);
-        }
+        wait_for_completion(timeoutMs);
 
         currentCommand.active = false;
         return currentCommand.result;
@@ -135,23 +138,11 @@ namespace cellular
 
         LOG_INF("SendCmd: %s", command.data());
 
-        uint32_t tick = 0;
         std::span<const uint8_t> bytes = std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(command.data()), command.size());
 
         uart_.writeIntr(bytes);
 
-        while (tick < timeoutMs)
-        {
-            processRx(); // process the response
-
-            if (currentCommand.done)
-            {
-                break;
-            }
-
-            tick++;
-            k_msleep(1);
-        }
+        wait_for_completion(timeoutMs);
 
         atResponse response{};
 
@@ -159,7 +150,7 @@ namespace cellular
 
         if (response.result == atResult::OK && commandResponseLength > 0)
         {
-            const uint32_t copyLen = std::min(expectedResponse.size(), commandResponseLength);
+            const std::size_t copyLen = std::min<std::size_t>(expectedResponse.size(), commandResponseLength);
 
             for (std::size_t i = 0; i < copyLen; ++i)
             {
@@ -210,13 +201,7 @@ namespace cellular
         uart_.writeIntr(std::span<const uint8_t>(
             reinterpret_cast<const uint8_t *>(commandLine.data()), commandLine.size()));
 
-        uint32_t tick = 0;
-        while (tick < promptTimeoutMs && !promptSeen && !currentCommand.done)
-        {
-            processRx();
-            tick++;
-            k_msleep(1);
-        }
+        wait_for_completion(promptTimeoutMs, true);
 
         waitingPrompt = false;
 
@@ -259,17 +244,7 @@ namespace cellular
         uint8_t ctrlZ = 0x1A;
         uart_.writeIntr(std::span<const uint8_t>(&ctrlZ, 1));
 
-        tick = 0;
-        while (tick < submitTimeoutMs)
-        {
-            processRx();
-            if (currentCommand.done)
-            {
-                break;
-            }
-            tick++;
-            k_msleep(1);
-        }
+        wait_for_completion(submitTimeoutMs);
 
         currentCommand.active = false;
         return currentCommand.done ? currentCommand.result : atResult::Timeout;

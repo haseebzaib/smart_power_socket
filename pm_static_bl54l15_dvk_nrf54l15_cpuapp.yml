@@ -1,14 +1,36 @@
-# Preserve the application limit; leave the old internal settings area unused.
-app:
+# MCUboot executes a signed 1 MiB primary image from internal RRAM.
+mcuboot:
   address: 0x0
   region: flash_primary
-  size: 0x15c000
+  size: 0x20000
+mcuboot_pad:
+  address: 0x20000
+  region: flash_primary
+  size: 0x800
+app:
+  address: 0x20800
+  region: flash_primary
+  size: 0xff800
+mcuboot_primary:
+  address: 0x20000
+  region: flash_primary
+  size: 0x100000
+  span: [mcuboot_pad, app]
+mcuboot_primary_app:
+  address: 0x20800
+  region: flash_primary
+  size: 0xff800
+  span: [app]
+unused_internal_growth:
+  address: 0x120000
+  region: flash_primary
+  size: 0x3c000
 unused_internal_storage:
   address: 0x15c000
   region: flash_primary
   size: 0x9000
-# These two areas reserve space for future OTA images; no bootloader yet.
-ota_image_a:
+# A is MCUboot staging/swap storage; B retains the previous known-good image.
+mcuboot_secondary:
   address: 0x0
   region: external_flash
   size: 0x100000
@@ -16,11 +38,20 @@ ota_image_b:
   address: 0x100000
   region: external_flash
   size: 0x100000
-# Keep settings addresses stable; reserve the freed space for future layouts.
-ota_growth_reserve:
+mcuboot_scratch:
   address: 0x200000
   region: external_flash
-  size: 0x200000
+  size: 0x2000
+# The SDK's standalone NVS partition is the boot-policy journal.
+nvs_storage:
+  address: 0x202000
+  region: external_flash
+  size: 0x2000
+ota_growth_reserve:
+  address: 0x204000
+  region: external_flash
+  size: 0x1fc000
+# Preserve existing persisted settings and future application-data addresses.
 settings_storage:
   address: 0x400000
   region: external_flash

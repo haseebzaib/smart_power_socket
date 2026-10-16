@@ -104,6 +104,33 @@ SMS queue=2/24</pre>
   N/A means unavailable. One SMS, maximum 160 characters, using the shared retry
   queue. Detailed interrupt-stack readings remain in RTT logs.</p>
 
+  <h2>Get OTA Info</h2>
+  <p>Send <code>getotainfo</code> (case-insensitive, no arguments). One SMS reports
+  firmware-update status and persistent recovery history.</p>
+  <pre>OTA
+Run=Internal
+From=Backup B
+Backup=Ready
+Health=OK/60s
+Boots=12 WDT=3
+Streak=0/3
+Recoveries=1
+Last=Watchdog
+Update=Idle</pre>
+  <p>Run is always Internal. From is Initial, Updated, Backup B or Unknown:
+  Backup B identifies firmware restored from the recovery copy; Updated means
+  a different image was observed through OTA or SWD. Backup is Ready, None or Bad,
+  checked again when this command runs. Health is Wait/60s or OK/60s after one
+  minute of main-loop progress. Boots counts application starts; WDT counts
+  hardware or Zephyr task-watchdog resets. Streak is consecutive watchdog failures out of three.
+  Recoveries counts completed restorations, and Last names the latest reason
+  (Watchdog, Image or None). History remains after the streak clears.
+  Update is Idle, Download, Pending or Recovery.</p>
+  <p>Counts start with the updated bootloader and persist in external flash.
+  Recovery housekeeping reboots are excluded from Boots. This is a status query;
+  it does not start an update. Older firmware without this command cannot answer
+  it after rollback. See <a href="FOTA_Setup.md">FOTA setup</a> for details.</p>
+
   <h2>Get Cellular Info</h2>
   <p>Send <code>getcellularinfo</code> (case-insensitive, no arguments).
   One SMS shows the main cellular information, including latitude and longitude.</p>
@@ -433,5 +460,9 @@ Outlet=2
 2=119.390V,0.500A,53.000W</pre></td>
     </tr>
   </table>
+  <h2>Firmware Updates</h2>
+  <p>MCUboot, update storage and watchdog recovery infrastructure are implemented.
+  HTTP/BLE downloads and an update SMS command are not available yet. See
+  <a href="FOTA_Setup.md">FOTA setup</a> for build and board testing details.</p>
 </body>
 </html>

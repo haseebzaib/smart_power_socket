@@ -94,6 +94,7 @@ namespace cellular
 
 
     private:
+        void wait_for_completion(uint32_t timeoutMs, bool prompt = false);
         bool save_response(std::string_view line);
         void handle_line(std::string_view line);
         static std::string_view strip_line_ending(std::string_view text);

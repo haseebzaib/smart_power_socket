@@ -360,7 +360,10 @@ namespace app_config
             return -EDOM;
         }
         flash_area_close(area);
-#if FIXED_PARTITION_EXISTS(ota_image_a)
+#if defined(CONFIG_BOOTLOADER_MCUBOOT)
+        log_reserved_partition(FIXED_PARTITION_ID(slot1_partition), "MCUboot staging A");
+        log_reserved_partition(FIXED_PARTITION_ID(nvs_storage), "boot-policy journal");
+#elif FIXED_PARTITION_EXISTS(ota_image_a)
         log_reserved_partition(FIXED_PARTITION_ID(ota_image_a), "OTA image A");
 #endif
 #if FIXED_PARTITION_EXISTS(ota_image_b)
