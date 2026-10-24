@@ -67,7 +67,7 @@ namespace cellular
         };
 
         int init();
-        void loop(modemInformation &modemInfo, bool pollSms = true);
+        void loop(modemInformation &modemInfo, bool pollSms = true, bool allowLocation = true);
 
         // Refresh the cellular fields used by the compact SMS response.
         void get_cellular_info(modemInformation &info);
@@ -83,10 +83,31 @@ namespace cellular
         bool sms_send_ready() const;
         bool can_queue_sms(std::size_t count = 1) const;
         void process_sms_outbox();
+        uint64_t last_sms_id() const { return nextSmsId_ - 1; }
+        bool sms_pending(uint64_t id) const {
+            return std::any_of(smsOutbox_.begin(), smsOutbox_.end(),
+                [id](const auto &message) { return message.active && message.id == id; });
+        }
+#if defined(CONFIG_SPS_HTTP_OTA)
+        struct http_result { int code = 0; uint32_t bytes = 0, received = 0, total = 0; bool finished = false; };
+        int https_prepare(std::string_view hostname);
+        int https_start(std::string_view url, std::string_view localFile);
+        int https_poll(http_result &result);
+        void https_cleanup(bool cancel);
+        int file_open();
+        int file_close();
+        int file_size(std::string_view name, uint32_t &size);
+        int file_read(std::string_view name, uint32_t offset, std::span<uint8_t> output);
+#endif
         std::size_t sms_pending_count() const { return smsOutboxCount_; }
         static constexpr std::size_t sms_outbox_capacity() { return smsOutboxCapacity; }
 
     private:
+#if defined(CONFIG_SPS_HTTP_OTA)
+        static bool http_notification(std::string_view line, void *self);
+        bool httpActive_ = false, fileOpen_ = false;
+        http_result httpResult_{};
+#endif
         bool send_sms_single(std::string_view number, std::string_view body);
         bool send_sms_long(std::string_view number, std::string_view body);
 

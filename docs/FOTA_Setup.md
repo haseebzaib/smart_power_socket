@@ -2,8 +2,9 @@
 
 This profile is for `bl54l15_dvk/nrf54l15/cpuapp` on the custom SPS carrier,
 using the MX25R6435FZNIL0 external flash. It builds MCUboot and a signed application
-with NCS 3.2.4. Cellular HTTP and BLE transfer, server selection, remote update
-commands and fleet rollout are not implemented yet.
+with NCS 3.2.4. Cellular HTTPS updates are available through `ota=<version>`;
+see [HTTP OTA](HTTP_OTA.md) for repository configuration, release files and use.
+BLE transfer and fleet rollout remain future work.
 
 ## Execution and update flow
 
@@ -12,7 +13,8 @@ cannot be executed as an alternative A/B application on this carrier.
 
 1. Let the application complete one minute of main-loop progress with settings
    initialized. The initial factory run saves its signed image to backup B.
-2. A future HTTP/BLE transport calls `firmware_update::begin(size, sha256)`.
+2. The HTTPS controller (or a future BLE transport) calls the shared
+   `firmware_update::begin()` writer.
    This first archives the current healthy internal firmware into B and verifies
    readback, then erases staging A. A previous backup is not overwritten just
    because a newly installed image becomes healthy.
@@ -21,11 +23,13 @@ cannot be executed as an alternative A/B application on this carrier.
    no interrupted-download resume protocol; call `abort()` and begin again.
 4. `finish()` requires the exact expected byte count, a supported image header
    and TLV extent, CRC readback equality, and a SHA-256 match of the entire file.
-   It then sets MCUboot's pending upgrade marker. It does not reboot itself.
-5. After any response to the user, the transport can call
-   `sys_reboot(SYS_REBOOT_COLD)`. MCUboot authenticates the image hash and Ed25519
-   signature **before** installing it. A matching download SHA-256 alone does not
-   establish authenticity; use a trusted manifest and the MCUboot signing key.
+   The application also verifies the Ed25519 image signature with MCUboot's
+   configured public key before setting the pending marker. The writer does not
+   reboot itself.
+5. The HTTPS controller waits for the modem to accept its completion SMS before
+   rebooting. MCUboot independently authenticates the image hash and Ed25519
+   signature before installing it. The standard DFU manifest does not contain
+   a download hash; both readback integrity and signature authentication apply.
 6. MCUboot swaps A with the internal primary using scratch storage. Its swap
    journal supports resuming an interrupted swap. B remains untouched.
 7. The application health check clears the watchdog failure streak after another
@@ -33,10 +37,9 @@ cannot be executed as an alternative A/B application on this carrier.
    next download begins.
 
 The writer API is in [firmware_update.hpp](../src/ota/firmware_update.hpp).
-It is shared infrastructure for future transports, not an enabled remote update
-service. An HTTP response must be checked for successful status, correct file
-length and the intended signed image before feeding this API. Redirect handling,
-HTTPS/authentication and BLE authorization belong to the later transport work.
+HTTPS now uses this shared writer; BLE can use it later. The downloader consumes
+exactly the manifest and named signed binary from the SDK's DFU ZIP. For the full
+flow, failure behavior and network/TLS limits, see [HTTP OTA](HTTP_OTA.md).
 
 ## Lifetime watchdog recovery
 
@@ -214,6 +217,7 @@ python tools/verify_ota_build.py build-ota
 ./tests/ota/run.sh build-ota/smart_power_socket/zephyr/zephyr.signed.bin
 ./tests/watchdog/run.sh
 ./tests/cellular/run.sh
+./tests/http_ota/run.sh build-ota
 ```
 
 The host recovery tests need a C compiler supporting AddressSanitizer and
@@ -221,13 +225,16 @@ UndefinedBehaviorSanitizer. The artifact checker uses SDK Python packages,
 `imgtool`, PyYAML and IntelHex. It checks the actual partition map/configuration,
 verifies the signed file, rejects tampered and wrong-key files, checks merged
 image addresses and emits `build-ota/ota_manifest.json` with file size/SHA-256.
+It also refreshes `build-ota/dfu_application/` from the current ZIP for publication;
+upload its standard `manifest.json` and named `.signed.bin` together. The separate
+`ota_manifest.json` is diagnostic and is not the hosted manifest.
 It does not contact a server or a connected target.
 
 - Factory/SWD image: `build-ota/merged.hex` (MCUboot plus signed application).
 - Application OTA file: `build-ota/smart_power_socket/zephyr/zephyr.signed.bin`.
 - MCUboot image: `build-ota/mcuboot/zephyr/zephyr.hex`.
 - Image version: root `VERSION`, currently `1.0.0+0`. Increment for each release;
-  the existing SMS display version is maintained separately in `device_status`.
+  SMS reports use the same generated `1.0.0+0` version, replacing `001.00`.
 - Test-only SDK signing key is currently selected by sysbuild. Before deploying
   remote updates, configure `SB_CONFIG_BOOT_SIGNATURE_KEY_FILE` with your own
   protected Ed25519 key and install a matching MCUboot once. Keep the private
@@ -252,11 +259,11 @@ Known-good backup B verified and committed
 Firmware healthy: watchdog streak cleared; known-good backup B retained
 ```
 
-Future download/recovery milestones:
+Download/recovery milestones:
 
 ```text
 OTA ready: signed file ... bytes, staging A; backup B protected
-OTA file SHA-256/readback verified; reboot ready; MCUboot will authenticate signature
+OTA SHA-256, readback and Ed25519 signature verified; reboot ready
 Watchdog failure streak: 3/3; backup=available
 Restoring known-good backup B through MCUboot slot A
 Known-good firmware restored; journal result=0
@@ -273,9 +280,9 @@ Builds and simulated recovery tests are not hardware qualification. On the carri
    reporting progress. Confirm ~30-second task-watchdog resets (or a 20-second
    hardware reset if the CPU/interrupts stop), counts 1 then 2 then 3, and recovery to
    the previous version. Repeat after the updated image first passes health.
-4. Through the writer test transport, reject truncated files and wrong SHA-256;
-   stage a correctly hashed but wrongly signed file and confirm MCUboot refuses
-   installation while the current image remains usable.
+4. Use the HTTPS command with an incremented signed release. Check that a wrong
+   manifest version, truncation or invalid signature is rejected before reboot,
+   and a correct release installs. See HTTP_OTA.md for the full first-unit checks.
 5. Interrupt power during download, B archive, recovery staging and native swap.
    Check recovery logs and settings retention after each interruption. The first
    backup/update must be provisioned before expecting rollback to another version.

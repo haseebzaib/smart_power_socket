@@ -13,11 +13,12 @@ static void *receiveContext;
 enum mode { normal, data, error, no_response, sms, no_prompt, sms_error, sms_timeout };
 static mode behavior;
 static bool smsPayload;
+static std::string binaryFrame;
 int64_t k_uptime_get() { return now; }
 void k_msleep(int32_t ms) {
     now += ms*sleepStep;
     if (!pendingRx.empty() && now>=due) {
-        rx+=pendingRx; pendingRx.clear(); receive(&uartDevice,receiveContext);
+        rx+=pendingRx; pendingRx.clear(); while (!rx.empty()) receive(&uartDevice,receiveContext);
     }
 }
 int uart_fifo_read(const device *,uint8_t *buf,int max) {
@@ -32,7 +33,8 @@ int uartCon::init() { return 0; }
 int uartCon::writeIntr(std::span<const uint8_t> bytes) {
     writes.append(reinterpret_cast<const char *>(bytes.data()),bytes.size());
     std::string text(reinterpret_cast<const char *>(bytes.data()),bytes.size());
-    if(text=="AT+CSQ\r\n") pendingRx="AT+CSQ\r\n+CSQ: 24,99\r\nOK\r\n";
+    if(text.starts_with("AT+CFSRFILE")) pendingRx=binaryFrame;
+    else if(text=="AT+CSQ\r\n") pendingRx="AT+CSQ\r\n+CSQ: 24,99\r\nOK\r\n";
     else if(text.starts_with("AT+CMGS")) {
         smsPayload=true;
         if(behavior!=no_prompt) pendingRx="> ";
@@ -78,4 +80,38 @@ int main() {
     assert(modem.send_prompt_command("AT+CMGS=\"123\"\r\n","hello",100,60000)==engine::atResult::Timeout);
     assert(now>=60000 && now<60040);
     puts("PASS: full 60 s SMS submission timeout remains available");
+    const char raw[]="\0\r\nOK\r\nERROR\r\n+HTTPTOFS: 200,123\r\n>\x1a";
+    const std::string payload(raw,sizeof(raw)-1);
+
+    std::array<uint8_t,sizeof(raw)-1> binary{};
+    auto readBinary = [&] {
+        return modem.send_binary_command("AT+CFSRFILE=0,\"x.bin\",1,32,0\r\n", "+CFSRFILE:",binary,100);
+    };
+    setup(data);
+    binaryFrame="\r\n+CFSRFILE: "+std::to_string(payload.size())+"\r\n"+payload+"\r\nOK\r\n";
+    result=readBinary();
+    assert(result.result==engine::atResult::OK && result.responseLength==payload.size());
+    assert(!memcmp(binary.data(),payload.data(),payload.size()));
+    puts("PASS: binary bytes bypass text OK/ERROR, NUL, CR/LF, prompt and notification parsing");
+    setup(data); binaryFrame="\r\n+CFSRFILE: 38\r\n"+payload+"\r\nOK\r\n";
+    assert(readBinary().result==engine::atResult::InvalidResponse);
+    setup(data); binaryFrame="\r\n+CFSRFILE: "+std::to_string(payload.size())+"\r\nshort";
+    assert(readBinary().result==engine::atResult::Timeout);
+    setup(data); binaryFrame="\r\nERROR\r\n";
+    assert(readBinary().result==engine::atResult::Error);
+    setup(normal); assert(modem.send_command("AT\r\n",100)==engine::atResult::OK);
+    puts("PASS: oversized, truncated and rejected binary frames fail and text commands recover");
+    int notifications=0;
+    modem.set_notification_handler([](std::string_view line,void *ctx) {
+        if(!line.starts_with("+HTTPTOFS:")) return false;
+        ++*static_cast<int *>(ctx);return true;
+    },&notifications);
+    setup(data); binaryFrame="\r\n+HTTPTOFS: 200,999\r\n+CFSRFILE: "+std::to_string(payload.size())+"\r\n"+payload+"\r\nOK\r\n";
+    assert(readBinary().result==engine::atResult::OK && notifications==1);
+    setup(sms); rx="\r\n+HTTPTOFS: 200,456\r\n";
+    while(!rx.empty()) receive(&uartDevice,receiveContext);
+    assert(modem.send_prompt_command("AT+CMGS=\"123\"\r\n","hello",100,60000)==engine::atResult::OK);
+    assert(notifications==2);
+    puts("PASS: asynchronous HTTP completion survives binary commands and SMS prompt setup");
+
 }

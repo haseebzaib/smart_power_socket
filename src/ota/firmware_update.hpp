@@ -3,16 +3,20 @@
 #include <cstdint>
 #include <span>
 namespace firmware_update {
-// No HTTP/BLE transport or SMS update command yet. Both transports will use
-// this same sequential writer. Supply the SHA-256 of the complete signed file.
+// Shared signed-image writer for HTTPS now and BLE later.
 int init();
 // Formats one <=160-character SMS. Returns length, or a negative errno.
 int format_info(std::span<char> output);
 void poll_health(bool settingsReady);
+int ready_for_update();
 int begin(std::size_t signedFileSize, std::span<const uint8_t, 32> expectedSha256);
+// Standard DFU manifests lack a file hash. This form requires finish(hash)
+// with the hash accumulated while receiving; signature checks still apply.
+int begin(std::size_t signedFileSize);
 int write(std::span<const uint8_t> data);
 // Verify the complete file and mark it pending. Caller reboots after any reply.
-// MCUboot authenticates its signature before installing/executing it.
+// Both the application and MCUboot authenticate its signature.
 int finish();
+int finish(std::span<const uint8_t, 32> receivedSha256);
 void abort();
 }

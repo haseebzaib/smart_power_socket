@@ -15,6 +15,9 @@ namespace cellular
           pwrKey_(pwrKey, pwrKeyFlags),
           dtr_(dtr, dtrFlags)
     {
+#if defined(CONFIG_SPS_HTTP_OTA)
+        atEngine_.set_notification_handler(http_notification, this);
+#endif
     }
 
     sim7080::~sim7080()
@@ -150,7 +153,7 @@ namespace cellular
         return 0;
     }
 
-    void sim7080::loop(modemInformation &modemInfo, bool pollSms)
+    void sim7080::loop(modemInformation &modemInfo, bool pollSms, bool allowLocation)
     {
 
         atEngine_.processRx();
@@ -166,7 +169,7 @@ namespace cellular
         if (modemInformation_.networkRegistration == 1 || modemInformation_.networkRegistration == 5)
         {
             ensure_data_connection();
-            if (modemInformation_.dataConnected)
+            if (modemInformation_.dataConnected && allowLocation)
             {
                 get_location();
             }

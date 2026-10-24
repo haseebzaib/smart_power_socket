@@ -34,7 +34,7 @@ RSL=-101
 Batt=4.44
 Lat=42.027998
 Lon=-91.631620
-FW=001.00
+FW=1.0.0+0
 HBD=0.000
 UpDays=0.123
 ```
@@ -70,7 +70,7 @@ gethwinfo
 Example (illustrative readings):
 
 ```text
-nRF54L15 FW=001.00
+nRF54L15 FW=1.0.0+0
 CPU avg=3.2%
 Uptime=0d 1h 48m
 Stack peak%=Main:28 Log:44 Max:78
@@ -143,7 +143,8 @@ Update=Idle
 - `Recoveries`: completed restorations from B; `Last` is the most recent completed
   recovery reason: `Watchdog`, `Image` (boot/image validation failure), or `None`.
   These history fields persist after the health check clears `Streak`.
-- `Update`: `Idle`, `Download`, `Pending` (awaiting reboot), or `Recovery`.
+- `Update`: `Idle`, `Checking`, `Manifest`, `Download`, `Stage`, `Verify`,
+  `Pending` (verified; waiting for completion SMS/reboot), `Failed`, or `Recovery`.
 
 History is stored separately from the existing boot-policy record and external
 settings. Counters start when the updated MCUboot first runs, saturate at the
@@ -427,7 +428,7 @@ RSL=-101
 Batt=4.44
 Lat=42.027998
 Lon=-91.631620
-FW=001.00
+FW=1.0.0+0
 HBD=0.000
 UpDays=0.001
 ```
@@ -451,7 +452,7 @@ RSL=-101
 Batt=4.44
 Lat=42.027998
 Lon=-91.631620
-FW=001.00
+FW=1.0.0+0
 HBD=0.000
 ```
 
@@ -473,7 +474,7 @@ RSL=-101
 Batt=4.44
 Lat=42.027998
 Lon=-91.631620
-FW=001.00
+FW=1.0.0+0
 HBD=0.000
 ```
 
@@ -499,7 +500,7 @@ RSL=-101
 Batt=4.44
 Lat=42.027998
 Lon=-91.631620
-FW=001.00
+FW=1.0.0+0
 HBD=0.000
 ```
 
@@ -683,7 +684,37 @@ AC presence and socket metering. Logs appear on state changes or roughly every
 
 ## Firmware updates
 
-The MCUboot/watchdog/update-storage foundation is described in
-[FOTA_Setup.md](FOTA_Setup.md). HTTP/BLE downloads and an update-trigger SMS command are not
-available yet. Existing relay commands retain their behavior; they do not
-request firmware updates or change the watchdog recovery policy.
+### `ota=<version>`
+
+Download and install a signed release over cellular HTTPS from the configured
+public repository. Examples:
+
+```text
+ota=1.0.1
+ota=1.0.1+2
+```
+
+The first form requests `1.0.1+0`. The requested version must match both the
+standard `dfu_application/manifest.json` and its named signed binary. `FW` reports
+use this same root-`VERSION`/MCUboot version, replacing the old `001.00` label.
+
+The command queues `OTA 1.0.1+0 accepted; checking manifest`. After download,
+readback and signature verification it queues
+`OTA 1.0.1+0 verified; rebooting to install`. Each reply uses the generic outbox;
+the device waits for the modem to accept the completion SMS before rebooting.
+Acceptance is not proof of handset delivery. Download/verification failures
+return an `ERR OTA ...` reply without requesting an install reboot.
+
+Use `getotainfo` to check progress. Only one update runs at a time; the current
+image must have reached `Health=OK/60s`. Settings remain in their existing external
+partition. Staging uses A after preserving the healthy running firmware in B.
+The application always executes internally; lifetime rollback still uses B after
+three consecutive watchdog failures.
+
+Until `CONFIG_SPS_OTA_BASE_URL` is configured, the command returns
+`ERR OTA URL not configured`. The repository must host the standard manifest and
+named `.signed.bin` from the same DFU ZIP, both directly downloadable over HTTPS.
+The version already running is rejected. BLE transfer is not implemented yet.
+
+See [HTTP OTA](HTTP_OTA.md) for URL configuration, release publishing, errors,
+limits and first-unit testing, and [FOTA setup](FOTA_Setup.md) for build/recovery.

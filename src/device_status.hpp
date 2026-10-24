@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <span>
 #include <string_view>
+#include <zephyr/app_version.h>
 
 #include "hardware/gpio_con.hpp"
 #include "sensors/hlw811x.hpp"
@@ -14,7 +15,7 @@ namespace device_status
 {
 
     static constexpr std::size_t outletCount = 4;
-    static constexpr std::string_view firmwareVersion = "001.00";
+    static constexpr std::string_view firmwareVersion = APP_VERSION_TWEAK_STRING;
 
     struct snapshot
     {

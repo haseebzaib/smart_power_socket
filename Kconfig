@@ -1,0 +1,17 @@
+mainmenu "Smart Power Socket"
+source "Kconfig.zephyr"
+
+config SPS_HTTP_OTA
+    bool "SMS-controlled SIM7080 HTTPS firmware updates"
+    default y if BOOTLOADER_MCUBOOT
+    depends on BOOTLOADER_MCUBOOT
+    select JSON_LIBRARY
+
+config SPS_OTA_BASE_URL
+    string "HTTPS URL of the hosted dfu_application directory"
+    depends on SPS_HTTP_OTA
+    default ""
+    help
+      Raw HTTPS directory URL ending with /dfu_application/.
+      Example: https://raw.githubusercontent.com/OWNER/REPO/main/dfu_application/
+      Leave empty until the repository exists; ota commands report an error.

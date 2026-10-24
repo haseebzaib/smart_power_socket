@@ -1,5 +1,6 @@
 #include "system/watchdog.hpp"
 #include "at_engine.hpp"
+#include <charconv>
 
 LOG_MODULE_REGISTER(at_engine, LOG_LEVEL_INF);
 
@@ -55,6 +56,18 @@ namespace cellular
 
     void atEngine::onRxByte(uint8_t byte)
     {
+        if (binaryActive_ && binaryHeader_ && (binarySkipLf_ || binaryReceived_ < binaryDeclared_)) {
+            if (binarySkipLf_) {
+                binarySkipLf_ = false;
+                if (byte != '\n') {
+                    currentCommand.result = atResult::InvalidResponse;
+                    currentCommand.done = true;
+                }
+                return;
+            }
+            binaryOutput_[binaryReceived_++] = byte;
+            return;
+        }
         if (waitingPrompt && byte == '>')
         {
             promptSeen = true;
@@ -64,9 +77,9 @@ namespace cellular
         {
             if (lineBufferLength > 0)
             {
-                handle_line(std::string_view{
-                    reinterpret_cast<char *>(lineBuffer.data()),
-                    lineBufferLength});
+                const std::string_view line{
+                    reinterpret_cast<char *>(lineBuffer.data()), lineBufferLength};
+                if (!capture_binary_header(line, byte == '\r')) handle_line(line);
 
                 lineBufferLength = 0;
             }
@@ -81,6 +94,60 @@ namespace cellular
         {
             lineBufferLength = 0;
         }
+    }
+
+    bool atEngine::capture_binary_header(std::string_view line, bool carriageReturn)
+    {
+        if (!binaryActive_ || binaryHeader_ || !line.starts_with(currentCommand.expectedPrefix)) return false;
+        auto size = line.substr(currentCommand.expectedPrefix.size());
+        while (!size.empty() && size.front() == ' ') size.remove_prefix(1);
+        auto result = std::from_chars(size.data(), size.data() + size.size(), binaryDeclared_);
+        if (result.ec != std::errc{} || result.ptr != size.data() + size.size() || binaryDeclared_ != binaryOutput_.size()) {
+            currentCommand.result = atResult::InvalidResponse;
+            currentCommand.done = true;
+            return true;
+        }
+        binaryHeader_ = true;
+        binarySkipLf_ = carriageReturn;
+        return true;
+    }
+
+    atEngine::atResponse atEngine::send_binary_command(std::string_view command, std::string_view prefix,
+                                                       std::span<uint8_t> output, uint32_t timeoutMs)
+    {
+        if (currentCommand.active || binaryActive_) return {atResult::Busy, 0, false};
+        currentCommand = {};
+        currentCommand.active = true;
+        currentCommand.commandText = strip_line_ending(command);
+        currentCommand.expectedPrefix = prefix;
+        currentCommand.result = atResult::Timeout;
+        commandResponseLength = 0;
+        lineBufferLength = 0;
+        binaryOutput_ = output;
+        binaryActive_ = true;
+        binaryHeader_ = binarySkipLf_ = false;
+        binaryDeclared_ = binaryReceived_ = 0;
+        LOG_DBG("Binary file command: %.*s", static_cast<int>(command.size()), command.data());
+        int sent = uart_.writeIntr(std::span<const uint8_t>{reinterpret_cast<const uint8_t *>(command.data()), command.size()});
+        if (sent == static_cast<int>(command.size())) wait_for_completion(timeoutMs);
+        atResult result = currentCommand.done ? currentCommand.result : atResult::Timeout;
+        if (result == atResult::OK && (!binaryHeader_ || binaryReceived_ != output.size())) result = atResult::InvalidResponse;
+        binaryActive_ = false;
+        binaryOutput_ = {};
+        currentCommand.active = false;
+        lineBufferLength = 0;
+        if (result != atResult::OK) {
+            // CFS reads are local modem-flash operations. Drain a failed frame
+            // before returning to text commands; never retry/store partial data.
+            uint8_t drop;
+            int64_t quiet = k_uptime_get(), limit = quiet + 2000;
+            while (k_uptime_get() < limit && k_uptime_get() - quiet < 100) {
+                while (pop_single(drop) == 0) quiet = k_uptime_get();
+                k_msleep(1);
+            }
+            lineBufferLength = 0;
+        }
+        return {result, result == atResult::OK ? binaryReceived_ : 0, result == atResult::OK};
     }
 
     void atEngine::wait_for_completion(uint32_t timeoutMs, bool prompt)
@@ -170,6 +237,9 @@ namespace cellular
                                                      uint32_t promptTimeoutMs,
                                                      uint32_t submitTimeoutMs)
     {
+        // Dispatch queued asynchronous notifications (including HTTP completion)
+        // before clearing old prompt/response framing.
+        processRx();
         uint8_t staleByte{};
         uint32_t staleCount = 0;
         while (pop_single(staleByte) == 0)
@@ -289,6 +359,8 @@ namespace cellular
         {
             return; // nothing to process basically
         }
+
+        if (notificationHandler_ && notificationHandler_(line, notificationContext_)) return;
 
         if (currentCommand.active)
         {

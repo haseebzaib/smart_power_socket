@@ -7,3 +7,7 @@ c++ -std=c++20 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
   -Itests/cellular/stubs -Isrc \
   tests/cellular/at_wait_test.cpp src/cellular/at_engine.cpp -o "$test_binary"
 "$test_binary"
+c++ -std=c++20 -g -DCONFIG_SPS_HTTP_OTA=1 -fsanitize=address,undefined -fno-omit-frame-pointer \
+  -Itests/cellular/stubs -Isrc \
+  tests/cellular/https_test.cpp src/cellular/at_engine.cpp src/cellular/sim7080_https.cpp -o "$test_binary"
+"$test_binary"

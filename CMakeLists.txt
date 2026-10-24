@@ -34,9 +34,24 @@ if(CONFIG_BOOTLOADER_MCUBOOT)
   endif()
   target_sources(app PRIVATE
     src/ota/firmware_update.cpp
+    src/ota/image_verify.cpp
     modules/sps_boot/src/boot_storage.c
     modules/sps_boot/src/watchdog_reset.c
     src/system/watchdog.cpp
   )
-  target_include_directories(app PRIVATE modules/sps_boot/src)
+  if(NOT CONFIG_MCUBOOT_BOOTLOADER_SIGNATURE_TYPE_ED25519 OR CONFIG_MCUBOOT_BOOTLOADER_SIGNATURE_TYPE_PURE)
+    message(FATAL_ERROR "SPS OTA requires MCUboot SHA-512/Ed25519 hash signing")
+  endif()
+  set(ota_key_header ${CMAKE_CURRENT_BINARY_DIR}/ota_generated/ota_public_key.hpp)
+  add_custom_command(OUTPUT ${ota_key_header}
+    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/export_ota_key.py
+      --key ${CONFIG_MCUBOOT_SIGNATURE_KEY_FILE} --output ${ota_key_header}
+    DEPENDS ${CONFIG_MCUBOOT_SIGNATURE_KEY_FILE} tools/export_ota_key.py
+    VERBATIM)
+  target_sources(app PRIVATE ${ota_key_header})
+  target_include_directories(app PRIVATE modules/sps_boot/src ${CMAKE_CURRENT_BINARY_DIR}/ota_generated)
+endif()
+
+if(CONFIG_SPS_HTTP_OTA)
+  target_sources(app PRIVATE src/ota/manifest.cpp src/ota/http_update.cpp src/cellular/sim7080_https.cpp)
 endif()

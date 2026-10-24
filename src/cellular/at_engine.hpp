@@ -71,6 +71,15 @@ namespace cellular
         atEngine &operator=(const atEngine &) = delete;
 
         int init();
+        using notification_handler = bool (*)(std::string_view, void *);
+        void set_notification_handler(notification_handler handler, void *context) {
+            notificationHandler_ = handler; notificationContext_ = context;
+        }
+        // Reads a length-prefixed binary body before the final OK. Firmware
+        // bytes bypass CR/LF, prompt and URC parsing completely.
+        atResponse send_binary_command(std::string_view command, std::string_view prefix,
+                                       std::span<uint8_t> output, uint32_t timeoutMs);
+
 
         void processRx();
         void onRxByte(uint8_t byte);
@@ -94,6 +103,12 @@ namespace cellular
 
 
     private:
+        bool capture_binary_header(std::string_view line, bool carriageReturn);
+        notification_handler notificationHandler_ = nullptr;
+        void *notificationContext_ = nullptr;
+        bool binaryActive_ = false, binaryHeader_ = false, binarySkipLf_ = false;
+        std::span<uint8_t> binaryOutput_{};
+        size_t binaryDeclared_ = 0, binaryReceived_ = 0;
         void wait_for_completion(uint32_t timeoutMs, bool prompt = false);
         bool save_response(std::string_view line);
         void handle_line(std::string_view line);

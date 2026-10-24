@@ -17,6 +17,9 @@
 #include "app_config.hpp"
 #if defined(CONFIG_BOOTLOADER_MCUBOOT)
 #include "ota/firmware_update.hpp"
+#if defined(CONFIG_SPS_HTTP_OTA)
+#include "ota/http_update.hpp"
+#endif
 #endif
 
 LOG_MODULE_REGISTER(sms_commands, LOG_LEVEL_INF);
@@ -37,6 +40,7 @@ namespace sms_commands
                            std::string_view sender,
                            std::string_view body);
     void handle_get_hw_info(const context &ctx, std::string_view sender, std::string_view body);
+    void handle_ota(const context &ctx, std::string_view sender, std::string_view body);
     void handle_get_ota_info(const context &ctx, std::string_view sender, std::string_view body);
     void handle_set_heart_beat_days(const context &ctx,
                                     std::string_view sender,
@@ -82,10 +86,11 @@ namespace sms_commands
                                   std::string_view sender,
                                   std::string_view body);
 
-    constexpr std::array<commandDefinition, 19> commands = {{
+    constexpr std::array<commandDefinition, 20> commands = {{
         {"getStatus", handle_get_status},
         {"gethwinfo", handle_get_hw_info},
         {"getotainfo", handle_get_ota_info},
+        {"ota", handle_ota},
         {"getcellularinfo", handle_get_cellular_info},
         {"SetHeartBeatDays", handle_set_heart_beat_days},
         {"DeviceOn", handle_device_on},
@@ -1024,7 +1029,7 @@ namespace sms_commands
 
         std::array<char, 161> response{};
         const int length = std::snprintf(response.data(), response.size(),
-            "nRF54L15 FW=%.8s\nCPU avg=%s\nUptime=%ud %uh %um\nStack peak%%=Main:%s Log:%s Max:%s\n"
+            "nRF54L15 FW=%.25s\nCPU avg=%s\nUptime=%ud %uh %um\nStack peak%%=Main:%s Log:%s Max:%s\n"
             "Heap KiB=%u used/%u free\nThreads=%u Reset=%s\nSMS queue=%u/%u",
             device_status::firmwareVersion.data(), cpu.data(),
             days, hours, minutes, mainStack.data(), logStack.data(), maxStack.data(),
@@ -1038,6 +1043,16 @@ namespace sms_commands
             return;
         }
         ctx.modem.send_sms(sender, std::string_view{response.data(), static_cast<std::size_t>(length)});
+    }
+
+    void handle_ota(const context &ctx, std::string_view sender, std::string_view body)
+    {
+#if defined(CONFIG_SPS_HTTP_OTA)
+        int rc = http_update::request(ctx.modem, sender, trim(command_argument(body)));
+        if (rc) send_command_ack(ctx, sender, http_update::request_error(rc));
+#else
+        send_command_ack(ctx, sender, "OTA downloads not enabled in this firmware");
+#endif
     }
 
     void handle_get_ota_info(const context &ctx, std::string_view sender, std::string_view)

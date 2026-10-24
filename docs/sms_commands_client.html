@@ -72,7 +72,7 @@ RSL=-101
 Batt=4.44
 Lat=42.027998
 Lon=-91.631620
-FW=001.00
+FW=1.0.0+0
 HBD=0.000
 UpDays=0.123</pre></td>
       <td><pre>Outlet=1111
@@ -86,7 +86,7 @@ UpDays=0.123</pre></td>
   <h2>Get Hardware Info</h2>
   <p>Send <code>gethwinfo</code> (case-insensitive, no arguments). One SMS gives a
   compact hardware/runtime summary.</p>
-  <pre>nRF54L15 FW=001.00
+  <pre>nRF54L15 FW=1.0.0+0
 CPU avg=3.2%
 Uptime=0d 1h 48m
 Stack peak%=Main:28 Log:44 Max:78
@@ -125,7 +125,7 @@ Update=Idle</pre>
   hardware or Zephyr task-watchdog resets. Streak is consecutive watchdog failures out of three.
   Recoveries counts completed restorations, and Last names the latest reason
   (Watchdog, Image or None). History remains after the streak clears.
-  Update is Idle, Download, Pending or Recovery.</p>
+  Update is Idle, Checking, Manifest, Download, Stage, Verify, Pending, Failed or Recovery.</p>
   <p>Counts start with the updated bootloader and persist in external flash.
   Recovery housekeeping reboots are excluded from Boots. This is a status query;
   it does not start an update. Older firmware without this command cannot answer
@@ -334,7 +334,7 @@ RSL=-101
 Batt=4.44
 Lat=42.027998
 Lon=-91.631620
-FW=001.00
+FW=1.0.0+0
 HBD=0.000
 UpDays=0.001</pre></td>
       <td><pre>Outlet=1111
@@ -357,7 +357,7 @@ RSL=-101
 Batt=4.44
 Lat=42.027998
 Lon=-91.631620
-FW=001.00
+FW=1.0.0+0
 HBD=0.000</pre></td>
     </tr>
   </table>
@@ -378,7 +378,7 @@ RSL=-101
 Batt=4.44
 Lat=42.027998
 Lon=-91.631620
-FW=001.00
+FW=1.0.0+0
 HBD=0.000</pre></td></tr>
   </table>
   <p>No incoming command is required and no outlet report follows this alert.
@@ -401,7 +401,7 @@ RSL=-101
 Batt=4.44
 Lat=42.027998
 Lon=-91.631620
-FW=001.00
+FW=1.0.0+0
 HBD=0.000</pre></td>
       <td><pre>Outlet=1111
 1=119.640V,0.001A,-0.064W
@@ -461,8 +461,22 @@ Outlet=2
     </tr>
   </table>
   <h2>Firmware Updates</h2>
-  <p>MCUboot, update storage and watchdog recovery infrastructure are implemented.
-  HTTP/BLE downloads and an update SMS command are not available yet. See
-  <a href="FOTA_Setup.md">FOTA setup</a> for build and board testing details.</p>
+  <p>Send <code>ota=1.0.1</code> (version 1.0.1+0), or include the build number,
+  for example <code>ota=1.0.1+2</code>. The device downloads the configured public
+  release manifest and named signed binary over cellular HTTPS. The requested
+  version must match both. FW reports use this same version from the build.</p>
+  <pre>OTA 1.0.1+0 accepted; checking manifest
+OTA 1.0.1+0 verified; rebooting to install</pre>
+  <p>These are separate progress replies. The device verifies the complete image
+  and its signature, waits for the modem to accept the completion SMS, then
+  reboots to install. Failed downloads or checks return an ERR OTA reply without
+  requesting an install reboot. Modem acceptance does not prove delivery.</p>
+  <p>Use <code>getotainfo</code> for progress. Only one update can run, and the
+  current firmware must show Health=OK/60s. A stages the update; B keeps the
+  previous healthy firmware for recovery. Settings retain their partition.</p>
+  <p>The repository URL must first be configured; otherwise the reply is
+  ERR OTA URL not configured. See <a href="HTTP_OTA.md">HTTP OTA</a> for publishing
+  the two standard DFU files, configuration and first-unit testing, and
+  <a href="FOTA_Setup.md">FOTA setup</a> for recovery/build details. BLE is future work.</p>
 </body>
 </html>

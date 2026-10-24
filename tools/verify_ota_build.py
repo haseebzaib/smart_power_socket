@@ -54,6 +54,9 @@ for k in ['BOOT_GO_HOOKS', 'BOOT_VALIDATE_SLOT0', 'BOOT_SWAP_USING_SCRATCH', 'BO
     assert bc['CONFIG_'+k] == 'y', k
 assert ac['CONFIG_BOOTLOADER_MCUBOOT']=='y'
 assert ac['CONFIG_SETTINGS_NVS']=='y'
+assert ac['CONFIG_SPS_HTTP_OTA']=='y'
+for setting in ('JSON_LIBRARY', 'PSA_WANT_ALG_SHA_512', 'PSA_WANT_ALG_PURE_EDDSA', 'PSA_WANT_ECC_TWISTED_EDWARDS_255'):
+    assert ac['CONFIG_'+setting]=='y', setting
 assert ac['CONFIG_FLASH_AREA_CHECK_INTEGRITY_PSA']=='y'
 for setting in ('TASK_WDT', 'TASK_WDT_HW_FALLBACK'):
     assert ac['CONFIG_'+setting]=='y', setting
@@ -113,3 +116,5 @@ manifest = {
 (build/'ota_manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
 print(f'OTA image: {len(b)} bytes; version {manifest["version"]}')
 print(f'Manifest: {build/"ota_manifest.json"}')
+
+subprocess.run([sys.executable, str(Path(__file__).with_name('prepare_ota_folder.py')), str(build)], check=True)

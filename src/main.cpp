@@ -27,6 +27,9 @@
 #include "system/watchdog.hpp"
 #if defined(CONFIG_BOOTLOADER_MCUBOOT)
 #include "ota/firmware_update.hpp"
+#if defined(CONFIG_SPS_HTTP_OTA)
+#include "ota/http_update.hpp"
+#endif
 #include "sps_boot.h"
 #endif
 
@@ -411,7 +414,12 @@ int main(void)
 			}
 		}
 
-		modemSim7080.loop(sim7080Information, modemSim7080.can_queue_sms(sms_commands::maxCommandReplyMessages));
+		bool allowLocation = true;
+#if defined(CONFIG_SPS_HTTP_OTA)
+		allowLocation = !http_update::busy();
+#endif
+		modemSim7080.loop(sim7080Information,
+			modemSim7080.can_queue_sms(sms_commands::maxCommandReplyMessages), allowLocation);
 
 		LOG_INF("#########Sim7080Information#########");
 		LOG_INF("ModelIdentification: %s", sim7080Information.modelIdentification.data());
@@ -498,6 +506,9 @@ int main(void)
 		}
 
 		modemSim7080.process_sms_outbox();
+#if defined(CONFIG_SPS_HTTP_OTA)
+		http_update::process(modemSim7080);
+#endif
 		LOG_INF("#########END#########");
 
 #if defined(CONFIG_BOOTLOADER_MCUBOOT)

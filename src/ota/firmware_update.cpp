@@ -1,4 +1,8 @@
 #include "firmware_update.hpp"
+#include "image_verify.hpp"
+#if defined(CONFIG_SPS_HTTP_OTA)
+#include "http_update.hpp"
+#endif
 #include "sps_boot.h"
 #include "system/watchdog.hpp"
 #include <algorithm>
@@ -14,7 +18,7 @@
 LOG_MODULE_REGISTER(firmware_update, LOG_LEVEL_INF);
 namespace {
 K_MUTEX_DEFINE(updateMutex);
-bool ready, active, healthy, scheduled;
+bool ready, active, healthy, scheduled, expectedHashKnown;
 int64_t healthySince = -1;
 std::size_t expectedSize, receivedSize;
 std::array<uint8_t, 32> expectedHash{};
@@ -94,7 +98,10 @@ int firmware_update::format_info(std::span<char> output)
     const char *reason = history.last_reason == SPS_REASON_WATCHDOG ? "Watchdog" :
         history.last_reason == SPS_REASON_IMAGE ? "Image" : "None";
     const char *update = state.recovery != SPS_RECOVERY_IDLE ? "Recovery" :
-        scheduled ? "Pending" : active ? "Download" : "Idle";
+        scheduled ? "Pending" : active ? "Stage" : "Idle";
+#if defined(CONFIG_SPS_HTTP_OTA)
+    if (state.recovery == SPS_RECOVERY_IDLE && http_update::busy()) update = http_update::phase_name();
+#endif
     int n = std::snprintf(output.data(), output.size(),
         "OTA\nRun=Internal\nFrom=%s\nBackup=%s\nHealth=%s/%us\nBoots=%u WDT=%u\n"
         "Streak=%u/3\nRecoveries=%u\nLast=%s\nUpdate=%s",
@@ -139,7 +146,7 @@ void firmware_update::poll_health(bool settingsReady)
     }
     k_mutex_unlock(&updateMutex);
 }
-int firmware_update::begin(std::size_t size, std::span<const uint8_t, 32> sha256)
+static int prepare_download(std::size_t size, const uint8_t *sha256)
 {
     app_watchdog::operation allowance{app_watchdog::flashTimeoutMs, "OTA prepare"};
     lock guard;
@@ -159,7 +166,8 @@ int firmware_update::begin(std::size_t size, std::span<const uint8_t, 32> sha256
         staging = nullptr;
         return rc;
     }
-    std::copy(sha256.begin(), sha256.end(), expectedHash.begin());
+    expectedHashKnown = sha256 != nullptr;
+    if (sha256) std::copy_n(sha256, expectedHash.size(), expectedHash.begin());
     expectedSize = size;
     receivedSize = 0;
     downloadCrc = 0;
@@ -179,11 +187,17 @@ int firmware_update::write(std::span<const uint8_t> data)
     receivedSize += data.size();
     return 0;
 }
-int firmware_update::finish()
+static int finish_download(const uint8_t *receivedHash)
 {
     app_watchdog::operation allowance{app_watchdog::flashTimeoutMs, "OTA verify"};
     lock guard;
     if (!active || receivedSize != expectedSize) return -EINVAL;
+    if (receivedHash) {
+        if (expectedHashKnown && !std::equal(expectedHash.begin(), expectedHash.end(), receivedHash)) return -EILSEQ;
+        std::copy_n(receivedHash, expectedHash.size(), expectedHash.begin());
+        expectedHashKnown = true;
+    }
+    if (!expectedHashKnown) return -EINVAL;
     uint32_t length, crc;
     int rc = sps_image_length(staging, &length);
     if (!rc && length != expectedSize) rc = -EBADMSG;
@@ -196,6 +210,7 @@ int firmware_update::finish()
     check.rbuf = buf.data();
     check.rblen = buf.size();
     if (!rc) rc = flash_area_check_int_sha256(staging, &check);
+    if (!rc) rc = verify_update_signature(staging, length);
     if (!rc) rc = boot_request_upgrade(BOOT_UPGRADE_PERMANENT);
     // Permanent here disables MCUboot's one-reset trial policy. Lifetime
     // rollback is handled independently by the boot journal and backup B.
@@ -204,7 +219,7 @@ int firmware_update::finish()
         active = false;
         flash_area_close(staging);
         staging = nullptr;
-        LOG_INF("OTA file SHA-256/readback verified; reboot ready; MCUboot will authenticate signature");
+        LOG_INF("OTA SHA-256, readback and Ed25519 signature verified; reboot ready");
     } else LOG_ERR("OTA finish failed: %d; image not scheduled", rc);
     return rc;
 }
@@ -218,3 +233,15 @@ void firmware_update::abort()
         LOG_WRN("OTA download abandoned; running firmware and backup B retained");
     }
 }
+
+int firmware_update::ready_for_update()
+{
+    lock guard;
+    if (!ready || !healthy) return -EAGAIN;
+    if (active || scheduled) return -EBUSY;
+    return 0;
+}
+int firmware_update::begin(std::size_t size, std::span<const uint8_t,32> sha256) { return prepare_download(size,sha256.data()); }
+int firmware_update::begin(std::size_t size) { return prepare_download(size,nullptr); }
+int firmware_update::finish() { return finish_download(nullptr); }
+int firmware_update::finish(std::span<const uint8_t,32> sha256) { return finish_download(sha256.data()); }
