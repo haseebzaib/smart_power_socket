@@ -1,5 +1,6 @@
 // Production writer + signature verifier, with NOR/journal APIs simulated in RAM.
 #include "ota/firmware_update.hpp"
+#include "ota/image_verify.hpp"
 #include "sps_boot.h"
 #include <zephyr/app_version.h>
 #include <zephyr/sys/byteorder.h>
@@ -48,16 +49,29 @@ int sps_area_erase(const flash_area *a) {events.push_back('A');memset(const_cast
 int sps_image_copy(const flash_area *a,const flash_area *b,uint32_t n,uint32_t) {events.push_back('B');memcpy(const_cast<uint8_t *>(b->data),a->data,n);return 0;}
 }
 int main(int argc,char **argv) {
-    assert(argc==2);std::ifstream f(argv[1],std::ios::binary);assert(f);
+    assert(argc==2 || argc==3);std::ifstream f(argv[1],std::ios::binary);assert(f);
     std::vector<uint8_t> image{std::istreambuf_iterator<char>(f),{}};
     for(int i=0;i<3;++i) {nor[i].assign(0x100000,0xff);areas[i]={nor[i].data(),nor[i].size()};}
     std::copy(image.begin(),image.end(),nor[0].begin());
-    // Simulate a distinct recorded B so begin() must archive the healthy primary.
-    std::copy(image.begin(),image.end(),nor[2].begin());nor[2][0x840]^=1;
-    state.backup_valid=1;state.backup_length=image.size();state.backup_crc=crc32_ieee_update(0,nor[2].data(),image.size());
+    std::vector<uint8_t> oldBackup=image;
+    if(argc==3) {
+        std::ifstream old(argv[2],std::ios::binary);assert(old);
+        oldBackup={std::istreambuf_iterator<char>(old),{}};
+    } else oldBackup[0x840]^=1;
+    std::copy(oldBackup.begin(),oldBackup.end(),nor[2].begin());
+    state.backup_valid=1;state.backup_length=oldBackup.size();
+    state.backup_crc=crc32_ieee_update(0,nor[2].data(),oldBackup.size());
+    bool trustedBackup=verify_update_signature(&areas[2],oldBackup.size())==0;
     assert(!firmware_update::init());assert(firmware_update::ready_for_update()==-EAGAIN);
     firmware_update::poll_health(true);now=60000;firmware_update::poll_health(true);
     assert(!firmware_update::ready_for_update());
+    if(trustedBackup) {
+        assert(state.backup_length==oldBackup.size() && !memcmp(nor[2].data(),oldBackup.data(),oldBackup.size()));
+        puts("PASS: a valid backup signed by the alternate project key is preserved during health checks");
+    } else {
+        assert(state.backup_length==image.size() && !memcmp(nor[2].data(),image.data(),image.size()));
+        puts("PASS: an intact untrusted/SDK-signed backup is reprovisioned from the healthy project-signed primary");
+    }
     std::array<char,161> info{};
     int infoLength=firmware_update::format_info(info);
     assert(infoLength>0 && infoLength<=160);

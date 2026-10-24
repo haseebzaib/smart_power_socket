@@ -94,6 +94,10 @@ fails in a completed/idle state, the recovery hook also attempts verified B.
 Ambiguous unfinished native swap metadata is preserved rather than overwritten.
 
 Journal or backup corruption is logged and prevents destructive recovery writes.
+The application health check also verifies B's signature against both trusted
+project keys. After a one-time SWD key transition, an intact SDK-signed B is
+reprovisioned from the newly healthy authenticated primary. Valid B images signed
+by either project key retain their normal previous-version lifetime.
 Recovery requires readable external flash and a valid backup. Before the initial
 one-minute factory health check, no previous image has been provisioned. The
 initial B image equals the factory image; a different previous version becomes
@@ -239,12 +243,14 @@ It does not contact a server or a connected target.
 - Factory/SWD image: `build-ota/merged.hex` (MCUboot plus signed application).
 - Application OTA file: `build-ota/smart_power_socket/zephyr/zephyr.signed.bin`.
 - MCUboot image: `build-ota/mcuboot/zephyr/zephyr.hex`.
-- Image version: root `VERSION`, currently `1.0.1+0`. Increment for each release;
+- Image version: root `VERSION`, displayed as major.minor.patch+tweak. Increment for each release;
   SMS reports use the same generated MCUboot version, replacing `001.00`.
-- Test-only SDK signing key is currently selected by sysbuild. Before deploying
-  remote updates, configure `SB_CONFIG_BOOT_SIGNATURE_KEY_FILE` with your own
-  protected Ed25519 key and install a matching MCUboot once. Keep the private
-  key on the signing system, not in a public repository or firmware download.
+- Two project public keys are embedded in MCUboot and the app. The default
+  signer is `keys/ota/private/primary-ed25519.pem`; the alternate signer is
+  selected by `sysbuild/recovery-signing.conf`. Both are accepted by the same
+  provisioned devices. See [signing and releases](OTA_signing_and_releases.md)
+  for both build commands, key paths and the one-time SWD transition from the
+  old SDK-key firmware. Never copy private PEMs into the public DFU directory.
 
 No automatic flash operation is part of these commands. For the first SWD
 installation, select the new merged image and do not mass-erase the external

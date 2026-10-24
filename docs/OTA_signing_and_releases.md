@@ -1,161 +1,167 @@
-# Signing keys, two build machines and release versions
+# Project signing keys and firmware releases
 
-## Current test key
+## Permanent two-key setup
 
-The current profile uses MCUboot's **SDK example Ed25519 key**. It is already
-included with the SDK; this project does not create a new key on every build.
-On this machine, the private PEM is:
+This project now has two independent Ed25519 signing pairs under `keys/ota/`.
+They replace the SDK example key used by the earlier test images. The key pairs
+are permanent: rebuilding or changing VERSION does not regenerate them.
+
+| Role | Private PEM, used to sign | Public PEM, compiled into boards |
+| --- | --- | --- |
+| Primary/default | `keys/ota/private/primary-ed25519.pem` | `keys/ota/public/primary-ed25519.pem` |
+| Alternate/recovery signer | `keys/ota/private/recovery-ed25519.pem` | `keys/ota/public/recovery-ed25519.pem` |
+
+On this machine the private-key folder is:
 
 ```text
-/home/hsb/ncs/v3.2.4/bootloader/mcuboot/root-ed25519.pem
+/home/hsb/smart_power_socket/keys/ota/private/
 ```
 
-`SB_CONFIG_BOOT_SIGNATURE_TYPE_ED25519=y` selects Ed25519. No project-specific
-`SB_CONFIG_BOOT_SIGNATURE_KEY_FILE` is configured, so sysbuild selects this SDK
-key. It signs application releases. MCUboot embeds the corresponding public key
-and uses it to check signatures. The application also embeds the public key to
-verify a staged update before rebooting.
+Both public keys are included in **both MCUboot and the application**. Every new
+board flashed with the new merged HEX trusts both. Each firmware file carries
+one signature from the selected private key; it does not need both signatures.
+The application checks against the same two keys before arming an update, and
+MCUboot independently checks before execution/install.
 
-`tools/export_ota_key.py` **exports the public key only** from the configured PEM.
-It does not generate a key pair, rotate keys or put the private key in firmware.
-Its generated header is under the build directory:
-`smart_power_socket/ota_generated/ota_public_key.hpp`. Changing firmware version
-or rebuilding does not change the signing key.
+`sysbuild.conf` selects the primary private PEM by default:
 
-The SDK example private key is publicly available, so it is suitable for this
-development test, not for authenticating production releases. The current test
-continues using it so both machines and the client's installed MCUboot can stay
-compatible.
+```ini
+SB_CONFIG_BOOT_SIGNATURE_KEY_FILE="keys/ota/private/primary-ed25519.pem"
+```
 
-## Building on your machine and the client's machine
+`sysbuild/ota_signing.cmake` resolves this path against the current checkout,
+validates it against both public keys and passes its absolute path to signing.
+No machine-specific SDK path needs to be maintained in source configuration.
+Missing/untrusted private PEMs fail configuration; no replacement key is
+generated and the SDK example key is not used as a fallback.
 
-The OTA signing key must match the public key in **the bootloader actually
-installed on the device**. Folder names, usernames and operating systems can
-differ. The public-key fingerprint must match. In an SDK terminal, after building:
+`tools/export_ota_key.py` reads the two public PEMs, not the private signer. It
+generates the app trust header and MCUboot's two-entry `bootutil_keys` table.
+The project module replaces the SDK's single-key provider for this profile
+without modifying the SDK installation. Both public keys stay embedded even
+when the selected release signer changes.
+
+## Two machines and backups
+
+If the client's machine builds/signs firmware, copy the **same** `keys/ota/`
+folder there, including the required private PEM. Do not generate another set.
+Private files were retained in the checkout as requested; if committed, access
+to the source repository and its clones gives access to the signing keys. Keep
+these files out of the public OTA repository. An independent backup is still
+needed; the alternate private key should also be saved separately.
+
+The client does not need any private PEM to flash an already built signed HEX or
+to receive OTA. You can build/sign on this machine and send the client only the
+merged HEX for initial SWD or the generated DFU pair for OTA hosting.
+
+After a completed build, run in the SDK terminal:
 
 ```sh
 python tools/ota_key_info.py build-ota
 ```
 
-For the current example key, the output includes:
+It prints the selected signing path/fingerprint and both trusted public-key
+fingerprints. It checks the linked MCUboot ELF table and application contain
+both keys, not just the configuration strings. Compare the fingerprints on
+both machines; the expected values are in [keys/ota/README.md](../keys/ota/README.md).
+It never prints private PEM contents.
 
-```text
-Ed25519 public-key SHA-256: c1907fa4eac7fae3840a78902b6f0710b037e9968e5c6274a12a28790c7d4e3c
-```
+Losing the primary private key is recoverable by selecting the already trusted
+recovery private key. Losing both keys and their backups requires a new key set
+and a matching SWD bootloader installation. A leaked key is a different problem:
+both public keys remain trusted, so switching signers does not revoke a key.
+Replacing the public trust set requires installing matching MCUboot and app.
 
-Run the command on both machines and compare this fingerprint. The script reads
-the actual app/MCUboot build configurations, checks both use the same public key,
-and prints no private key material. `verify_ota_build.py` also checks the match.
-Comparing builds verifies which key those builds use; it cannot read the key from
-a device that may have been flashed with some other build.
-
-For development, unmodified copies of the same SDK's example key should match;
-confirm the fingerprint instead of relying only on the filename. Do not create
-independent keys on each machine: the signatures would not match the client's
-installed bootloader.
-
-## A project-owned key for production
-
-Generate a key **once**, retain it and use it for subsequent releases. For example,
-in the SDK terminal:
+The generation command was run once:
 
 ```sh
-mkdir -p "$HOME/sps-signing"
-python "$ZEPHYR_BASE/../bootloader/mcuboot/scripts/imgtool.py" keygen \
-  -t ed25519 -k "$HOME/sps-signing/sps-ed25519.pem"
-chmod 600 "$HOME/sps-signing/sps-ed25519.pem"
+python tools/generate_ota_keys.py
 ```
 
-Do not run key generation over an existing release key. Keep a secure backup.
-Set the sysbuild string `SB_CONFIG_BOOT_SIGNATURE_KEY_FILE` to the absolute path
-of that PEM on each signing machine. For example, in its sysbuild configuration:
+It refuses to overwrite any existing key, including an incomplete set. Restore
+missing files from backup; do not regenerate them on a new machine.
 
-```ini
-SB_CONFIG_BOOT_SIGNATURE_KEY_FILE="/absolute/local/path/sps-ed25519.pem"
+## Build with the normal primary signer
+
+Use an NCS 3.2.4 SDK terminal. For the first build after this signing change:
+
+```sh
+west build -p always -d build-ota -b bl54l15_dvk/nrf54l15/cpuapp --sysbuild . -- \
+  '-DCONF_FILE=prj.conf;boards/bl54l15_dvk_nrf54l15_cpuapp.conf' \
+  -DDTC_OVERLAY_FILE=boards/bl54l15_dvk_nrf54l15_cpuapp.overlay
+python tools/verify_ota_build.py build-ota
 ```
 
-If both machines sign releases, securely provision **the same private PEM** on
-both. Alternatively, keep the private key on one release-signing machine and
-transfer only finished signed artifacts to the client. SWD flashing a prepared
-HEX does not need a private key. The generated public key can be shared freely;
-the private PEM must not go into the public OTA repository or DFU folder.
+Further normal primary builds can use `west build -d build-ota`.
 
-Switching from the SDK example key requires a matching MCUboot/application SWD
-installation and a pristine build. An ordinary application-only OTA cannot
-replace the public key already compiled into MCUboot. Keep the same key for
-normal version updates; do not regenerate it for every release.
+## Build with the recovery signer
 
-## Version file and OTA command
+Use the supplied sysbuild overlay, keeping a separate build directory:
 
-Edit the root `VERSION` file, not the generated manifest or signed binary:
+```sh
+west build -p always -d build-ota-recovery -b bl54l15_dvk/nrf54l15/cpuapp --sysbuild . -- \
+  '-DCONF_FILE=prj.conf;boards/bl54l15_dvk_nrf54l15_cpuapp.conf' \
+  -DDTC_OVERLAY_FILE=boards/bl54l15_dvk_nrf54l15_cpuapp.overlay \
+  -DSB_EXTRA_CONF_FILE=sysbuild/recovery-signing.conf
+python tools/verify_ota_build.py build-ota-recovery
+```
+
+Further recovery builds can use `west build -d build-ota-recovery`. This selects
+`keys/ota/private/recovery-ed25519.pem`. A device provisioned with the new merged
+image accepts this signature without another SWD change. Keep both public PEMs
+in the checkout even if the primary private PEM is unavailable.
+
+## First installation and the earlier SDK-key firmware
+
+Flash **the new `build-ota/merged.hex`** through SWD once on each existing board.
+It contains MCUboot and the app with both project public keys. You can also use
+the recovery-signed merged HEX: both bootloaders trust the identical pair.
+A public key is compiled into flash here; no separate KMU provisioning command
+is needed by this profile.
+
+The old `build-swd-1.0.0/merged.hex` and published 1.0.1 test release used the SDK
+example key. They are historical artifacts, not the starting firmware for the
+new key setup. Those old bootloaders do not trust the new project keys, and the
+new bootloader/app deliberately reject old SDK-signed images.
+
+The first healthy run verifies backup B's signature too. If B is intact but
+signed outside this new trust set, the app reprovisions B from the newly healthy,
+authenticated internal image. External settings/calibration retain their own
+partition. Wait for `Health=OK/60s` and `Backup=Ready` in `getotainfo` before OTA.
+A valid B signed by either project key is retained through normal health checks.
+
+## Firmware version and publishing
+
+Edit the root `VERSION` file. For example:
 
 ```text
 VERSION_MAJOR = 1
 VERSION_MINOR = 0
-PATCHLEVEL = 1
+PATCHLEVEL = 6
 VERSION_TWEAK = 0
 EXTRAVERSION =
 ```
 
-This builds version **1.0.1+0**. For the next patch, change `PATCHLEVEL` to `2`:
-version **1.0.2+0**, command **`ota=1.0.2`**. `VERSION_TWEAK` can distinguish builds
-of the same patch, for example tweak `1` gives `1.0.2+1` and `ota=1.0.2+1`.
-Keep EXTRAVERSION empty for this numeric OTA version scheme.
+This produces **1.0.6+0** and command **`ota=1.0.6`**. Increase the version from
+the firmware currently running; requesting that exact running version is
+rejected. `VERSION_TWEAK=1` would produce `1.0.6+1` and `ota=1.0.6+1`. Keep
+EXTRAVERSION empty for the numeric OTA scheme.
 
-Rebuild (which automatically refreshes the release folder), then verify it:
+A normal sysbuild refreshes `<build-dir>/dfu_application/` automatically and
+checks source, compiled, signed and manifest versions agree. The verification
+script additionally checks actual signatures, both compiled trust anchors,
+partitions and merged-image contents. Upload only these matching files together:
 
-```sh
-west build -d build-ota
-python tools/verify_ota_build.py build-ota
+```text
+dfu_application/manifest.json
+dfu_application/smart_power_socket.signed.bin
 ```
 
-The build refreshes `build-ota/dfu_application/` automatically and checks that
-VERSION, compiled version, signed header and manifest agree. The explicit checker
-also verifies signatures/partitions. Publish the folder's `manifest.json` and
-`smart_power_socket.signed.bin` **from the same build**, together in one commit,
-under `dfu_application/` on the OTA repository's `main` branch. The firmware URL
-stays the same as the folder's files are replaced. Do not hand-edit their version
-or size. See [HTTP OTA](HTTP_OTA.md) for the initial sysbuild command and URL.
+Use `build-ota/dfu_application/` for primary-signed releases or
+`build-ota-recovery/dfu_application/` for recovery-signed releases. Both use the
+same hosted URL and manifest format. Do not upload private keys, source trees,
+unsigned binaries or the merged factory HEX into the OTA directory.
 
-`getotainfo` now reports `FW=<running version>`, using the same generated version
-as signing and `getstatus`. It reports what is executing now, not what a server
-manifest advertises or which image is pending. After recovery it reports the
-restored firmware's version if that backup includes this command change.
-
-## First test: SWD 1.0.0, then OTA 1.0.1
-
-Two builds are prepared for this test:
-
-| Purpose | Version | Artifact |
-| --- | --- | --- |
-| Client SWD starting firmware, including URL and version-aware getotainfo | 1.0.0+0 | `build-swd-1.0.0/merged.hex` |
-| Hosted application update | 1.0.1+0 | `build-ota/dfu_application/` |
-
-The update pair is published in
-[SPS_OTA_UPDATE](https://github.com/haseebzaib/SPS_OTA_UPDATE/tree/main/dfu_application),
-commit [`eeddf04055cc`](https://github.com/haseebzaib/SPS_OTA_UPDATE/commit/eeddf04055cca3744a792f660c5d407863cbcb29).
-The published signed binary is 316,196 bytes with SHA-256
-`db55d7beeaaba629c21d5b7435cd532c1663fab68ea68e2fcd4ac6623ed2748f`.
-Both public raw URLs were fetched successfully and matched the local artifacts.
-The carrier download/install test remains to be performed by the client.
-
-1. Flash **the 1.0.0 starting merged HEX** on the client's device using SWD.
-   It includes MCUboot and the application. Do not flash the 1.0.1 merged HEX
-   first if you want to demonstrate an upgrade to 1.0.1.
-2. Let startup and the healthy/backup check complete. `getotainfo` should show
-   `FW=1.0.0+0`, `Backup=Ready`, `Health=OK/60s` and `Update=Idle`.
-3. With the 1.0.1 release folder published, send `ota=1.0.1`.
-4. After verification, the completion SMS and install reboot, send `getotainfo`.
-   Check **`FW=1.0.1+0`**; the image origin should be `Updated`.
-5. Wait for `Health=OK/60s` again. B retains the healthy 1.0.0 starting image for
-   lifetime rollback. The running program executes internally throughout.
-
-If building the starting image on the client instead of using the prepared HEX,
-set PATCHLEVEL to `0` for that build and use a separate build directory; then
-restore PATCHLEVEL `1` for the hosted update. Both use the same signing key and
-partition layout. Source changes made after producing these artifacts require
-new builds.
-
-A passing build/signature check does not establish cellular HTTPS connectivity.
-The actual modem download, installation and field SMS checks happen on the
-client's board. Do not erase external settings merely to install the SWD image.
+After publishing the incremented version, send `ota=<version>`. After installation,
+`getotainfo` reports the running `FW=<version>`; verify the result on the client's
+board. Host checks do not replace the actual modem/install hardware test.

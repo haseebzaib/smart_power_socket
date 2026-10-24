@@ -80,6 +80,9 @@ namespace cellular
         // Copies a message into the shared RAM outbox. True means queued,
         // not delivered. All command replies and alerts use this path.
         bool send_sms(std::string_view number, std::string_view body);
+        // Remove an optional message still queued in the main-thread outbox.
+        // This cannot recall a message already accepted by the modem.
+        bool cancel_queued_sms(uint64_t id);
         bool sms_send_ready() const;
         bool can_queue_sms(std::size_t count = 1) const;
         void process_sms_outbox();

@@ -122,7 +122,8 @@ Update=Idle</pre>
   Run is always Internal. From is Initial, Updated, Backup B or Unknown:
   Backup B identifies firmware restored from the recovery copy; Updated means
   a different image was observed through OTA or SWD. Backup is Ready, None or Bad,
-  checked again when this command runs. Health is Wait/60s or OK/60s after one
+  checked again (including its signature against either project key) when this
+  command runs. Health is Wait/60s or OK/60s after one
   minute of main-loop progress. Boots counts application starts; WDT counts
   hardware or Zephyr task-watchdog resets. Streak is consecutive watchdog failures out of three.
   Recoveries counts completed restorations, and Last names the latest reason
@@ -470,8 +471,20 @@ Outlet=2
   for example <code>ota=1.0.1+2</code>. The device downloads the configured public
   release manifest and named signed binary over cellular HTTPS. The requested
   version must match both. FW reports use this same version from the build.</p>
-  <pre>OTA 1.0.1+0 accepted; checking manifest
-OTA 1.0.1+0 verified; rebooting to install</pre>
+  <pre>OTA 1.0.6+0 accepted; checking manifest
+OTA 1.0.6+0: Downloading firmware...
+OTA 1.0.6+0: Downloading firmware: 25%
+OTA 1.0.6+0: Download complete; saving firmware...
+OTA 1.0.6+0: Saving firmware: 75%
+OTA 1.0.6+0: Firmware saved; checking signature...
+OTA 1.0.6+0 verified; rebooting to install</pre>
+  <p>Intermediate notices go to the command sender. Current percentages appear at
+  25% boundaries at least 30 seconds apart, or about once per minute during a long
+  phase. Fast transfers can skip intermediate values. A data pause reports waiting
+  for download data. Slow release checks also report that they are in progress.</p>
+  <p>Progress notices are best-effort: only one stays queued, an unsent old stage
+  is replaced by the latest, and the final verified/error reply takes priority.
+  The update does not require optional progress delivery to continue; the final reply still gates reboot.</p>
   <p>These are separate progress replies. The device verifies the complete image
   and its signature, waits for the modem to accept the completion SMS, then
   reboots to install. Failed downloads or checks return an ERR OTA reply without

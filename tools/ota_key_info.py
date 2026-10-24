@@ -59,6 +59,44 @@ def inspect_build(build):
     return boot_key, app_key, hashlib.sha256(selected).hexdigest()
 
 
+def verify_compiled_trust(build):
+    """Read MCUboot's linked key table, including builds where LTO folds count."""
+    from elftools.elf.elffile import ELFFile
+    expected = [bytes.fromhex(key['der']) for key in trusted_build_keys(build)]
+    with (build / 'mcuboot/zephyr/zephyr.elf').open('rb') as source:
+        elf = ELFFile(source)
+        symbols = elf.get_section_by_name('.symtab')
+        tables = symbols.get_symbol_by_name('bootutil_keys') if symbols else None
+        pointer_size = elf.elfclass // 8
+        if not tables or tables[0]['st_size'] != 2 * 2 * pointer_size:
+            raise ValueError('Linked MCUboot must contain exactly two trusted key entries')
+
+        def read(address, size):
+            for segment in elf.iter_segments():
+                offset = address - segment['p_vaddr']
+                if segment['p_type'] == 'PT_LOAD' and 0 <= offset and offset + size <= segment['p_filesz']:
+                    return segment.data()[offset:offset + size]
+            raise ValueError('MCUboot trust table references data outside the ELF')
+
+        table = read(tables[0]['st_value'], tables[0]['st_size'])
+        order = 'little' if elf.little_endian else 'big'
+        actual = []
+        for index in range(2):
+            row = table[index * 2 * pointer_size:(index + 1) * 2 * pointer_size]
+            key_address = int.from_bytes(row[:pointer_size], order)
+            len_address = int.from_bytes(row[pointer_size:], order)
+            length = int.from_bytes(read(len_address, 4), order)
+            if length != 44:
+                raise ValueError('Unexpected Ed25519 DER length in linked MCUboot')
+            actual.append(read(key_address, length))
+        if actual != expected:
+            raise ValueError('Linked MCUboot trust table differs from project public keys')
+    app = (build / 'smart_power_socket/zephyr/zephyr.signed.bin').read_bytes()
+    if any(key not in app for key in expected):
+        raise ValueError('Application image is missing a project public key')
+    return expected
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('build_dir', type=Path, nargs='?', default=Path('build-ota'))
@@ -70,6 +108,7 @@ if __name__ == '__main__':
         print(f'Selected signer public-key SHA-256: {fingerprint}')
     else:
         boot, app, fingerprint = inspect_build(args.build_dir)
+        verify_compiled_trust(args.build_dir)
         print(f'MCUboot public key file: {boot}')
         print(f'Application signing key file: {app}')
         print(f'Selected signer public-key SHA-256: {fingerprint}')

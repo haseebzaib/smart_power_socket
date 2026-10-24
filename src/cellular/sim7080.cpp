@@ -1123,6 +1123,16 @@ namespace cellular
         return true;
     }
 
+    bool sim7080::cancel_queued_sms(uint64_t id)
+    {
+        auto message = std::find_if(smsOutbox_.begin(), smsOutbox_.end(),
+            [id](const auto &entry) { return entry.active && entry.id == id; });
+        if (message == smsOutbox_.end()) return false;
+        *message = outgoingSms{};
+        --smsOutboxCount_;
+        return true;
+    }
+
     void sim7080::process_sms_outbox()
     {
         if ((modemInformation_.networkRegistration != 1 && modemInformation_.networkRegistration != 5) ||

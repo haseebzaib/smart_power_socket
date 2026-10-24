@@ -116,3 +116,14 @@ With RTT connected, verify these on hardware:
 
 No project build, simulated modem test or hardware validation was run. Source,
 API wiring, response-size bounds and documentation were checked statically.
+
+## Optional OTA progress notices
+
+OTA stage and periodic percentage messages use this same outbox. Only one optional
+progress notice stays queued per update, with five free slots reserved after
+insertion for other replies/results. An unsent older stage may be cancelled in
+favor of the latest stage. Terminal verification/failure removes pending optional
+progress before queuing the essential result; its specific SMS ID still controls
+the install reboot. This cancellation applies only to optional OTA notices.
+Already accepted messages cannot be recalled. Command responses and genuine alert
+events retain their normal retries. See [HTTP OTA](HTTP_OTA.md) for intervals.

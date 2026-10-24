@@ -7,8 +7,7 @@ firmware version (`FW`). See [signing and release versions](OTA_signing_and_rele
 for the two-machine key setup and the 1.0.0 SWD to 1.0.1 OTA test sequence.
 
 The firmware version now comes from the root `VERSION` file for both signing and
-SMS reports. The current source version is `1.0.1+0`; the old `001.00` SMS label is
-replaced by this same MCUboot version. Increment `VERSION` before each release.
+SMS reports. The old `001.00` SMS label is replaced by this same MCUboot version. Increment `VERSION` before each release.
 An update to the version already running is rejected; an older signed version is
 allowed deliberately for recovery/testing. Version components must fit MCUboot:
 major/minor 0–255, patch 0–65535, build 0–4294967295.
@@ -23,9 +22,11 @@ The carrier profile uses the public
 CONFIG_SPS_OTA_BASE_URL="https://raw.githubusercontent.com/haseebzaib/SPS_OTA_UPDATE/main/dfu_application/"
 ```
 
-Release **1.0.1+0** is published in this directory for the first test. Its raw
-manifest and signed binary returned HTTP 200 directly and matched the local
-build byte-for-byte. For future releases, publish the generated pair as below.
+The earlier **1.0.1+0** test pair was signed with the SDK example key. It is a
+historical release and is rejected by the new project-key trust set. Install the
+new merged MCUboot/app once through SWD, then publish an incremented release
+signed by either project key. See [signing and releases](OTA_signing_and_releases.md).
+The hosting URL and generated manifest format stay the same.
 Kconfig's generic default remains empty; another profile that
 does not set the URL replies `ERR OTA URL not configured`. The GitHub
 profile/repository webpage is not a file-download URL. Use the raw HTTPS
@@ -111,7 +112,7 @@ resume yet.
    staging A. Copy the modem file into A in bounded binary chunks while normal
    meter/SMS processing continues. Firmware bytes bypass text/prompt parsing.
 5. Require exact length, flash readback CRC/SHA-256, and the Ed25519 image signature
-   using the same configured public key as MCUboot. The standard SDK manifest has
+   using either of the same two project public keys trusted by MCUboot. The standard SDK manifest has
    no SHA-256 field: the controller hashes the received bytes and compares flash
    readback; the signature establishes authenticity. An optional `sha256` field
    with 64 hexadecimal characters is also checked if supplied.
@@ -130,9 +131,31 @@ replaces B if necessary. Do not overwrite B with an untested download.
 Example replies, each individually short:
 
 ```text
-OTA 1.0.1+0 accepted; checking manifest
-OTA 1.0.1+0 verified; rebooting to install
+OTA 1.0.6+0 accepted; checking manifest
+OTA 1.0.6+0: Downloading firmware...
+OTA 1.0.6+0: Downloading firmware: 25%
+OTA 1.0.6+0: Downloading firmware: 50%
+OTA 1.0.6+0: Download complete; saving firmware...
+OTA 1.0.6+0: Saving firmware: 75%
+OTA 1.0.6+0: Firmware saved; checking signature...
+OTA 1.0.6+0 verified; rebooting to install
 ```
+
+Progress notices go only to the OTA command sender. Stage changes are announced
+as they happen. Percentage checkpoints show the latest value when crossing a
+25% boundary, at least 30 seconds apart; a long-running phase also reports about
+once per minute. Fast transfers can skip intermediate values. While no data is
+arriving, the message says `Waiting for download data: ...%`; a slow manifest
+fetch reports `Checking release information...`. A download awaiting its final
+HTTP result never claims 100% completion.
+
+These intermediate notices are best-effort. At most one is queued, five outbox
+slots remain available after inserting it, and an unsent old stage is superseded
+by the current stage. Failure or completed verification removes any remaining
+optional notice before queuing the essential result. Progress cannot overwrite
+the completion SMS ID used to gate reboot. Normal command replies/alerts keep
+their retry behavior; delivery still depends on cellular registration and the
+shared outbox. The OTA controller does not require successful progress-message delivery to continue.
 
 On failure, one error reply names the failing step, for example:
 `ERR OTA 1.0.1+0: manifest version mismatch (-116)`. No install reboot is requested
@@ -185,9 +208,10 @@ Server certificate-chain validation depends on the SIM7080 firmware's HTTPTOFS
 TLS profile and provisioned certificates; this implementation does not provision
 CA certificates or claim verified server identity. It does not request disabling
 certificate checks. Firmware authenticity is independently enforced by the
-Ed25519 signature before arming and again by MCUboot. Continue to use the same
-signing key across application/bootloader releases; the SDK default key currently
-selected in sysbuild is for testing. See the signing notes in FOTA_Setup.md.
+Ed25519 signature before arming and again by MCUboot. Both project public keys
+are fixed trust anchors; primary or recovery private PEM can sign subsequent
+releases. Builds fail for a missing/untrusted signer instead of using the SDK
+example key. See [signing and releases](OTA_signing_and_releases.md).
 
 The host tests require a C/C++20 toolchain with sanitizers, OpenSSL development
 headers/libraries, and the NCS/Zephyr source tree recorded in the build cache.

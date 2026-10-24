@@ -18,7 +18,7 @@ static std::string replace(std::string s,const char *before,const char *after) {
     auto p=s.find(before);assert(p!=s.npos);s.replace(p,strlen(before),after);return s;
 }
 int main(int argc,char **argv) {
-    assert(argc==3);
+    assert(argc>=3 && argc<=5);
     using namespace ota_manifest;
     version v;
     for(auto text:{"1.0.0","1.0.0+0","255.255.65535+4294967295"}) assert(parse_version(text,v));
@@ -62,4 +62,16 @@ int main(int argc,char **argv) {
     assert(verify_update_signature(&area,bytes.size()-1)<0);
     assert(!verify_update_signature(&area,bytes.size()));
     puts("PASS: production pre-reboot verifier accepts real signature; rejects payload/signature/key-hash tampering and truncation");
+    if(argc>=4) {
+        std::string other=file(argv[3]);
+        flash_area recovery{reinterpret_cast<const uint8_t *>(other.data()),other.size()};
+        assert(!verify_update_signature(&recovery,other.size()));
+        puts("PASS: the same application verifier accepts a real image signed by the second project key");
+    }
+    if(argc>=5) {
+        std::string other=file(argv[4]);
+        flash_area untrusted{reinterpret_cast<const uint8_t *>(other.data()),other.size()};
+        assert(verify_update_signature(&untrusted,other.size())<0);
+        puts("PASS: an authentic SDK-example-key image is rejected by the project trust set");
+    }
 }

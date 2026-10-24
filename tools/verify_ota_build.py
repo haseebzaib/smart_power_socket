@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 import yaml
 from intelhex import IntelHex
-from ota_key_info import inspect_build
+from ota_key_info import inspect_build, verify_compiled_trust
 
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('build_dir', type=Path, nargs='?', default=Path('build-ota'))
@@ -68,7 +68,9 @@ assert bc.get('CONFIG_MCUBOOT_HW_ROLLBACK_PROT') != 'y'
 assert ac.get('CONFIG_NVS_DATA_CRC') != 'y'
 print('PASS: partition boundaries, settings address and boot configurations')
 _, _, key_fingerprint = inspect_build(build)
-print(f'PASS: matching app/MCUboot public key; SHA-256 {key_fingerprint}')
+print(f'PASS: selected signer is trusted; public-key SHA-256 {key_fingerprint}')
+verify_compiled_trust(build)
+print('PASS: linked MCUboot and application contain both project public keys')
 
 image = app/'zephyr.signed.bin'
 b = image.read_bytes()
@@ -79,7 +81,7 @@ tlv_magic, tlv_size = struct.unpack_from('<HH',b,pos)
 assert tlv_magic==0x6907 and pos+tlv_size==len(b)
 assert len(b)<=0xfc000
 major, minor, revision, build_num = struct.unpack_from('<BBHI',b,20)
-key = Path(bc['CONFIG_BOOT_SIGNATURE_KEY_FILE'].strip('"'))
+key = Path(ac['CONFIG_MCUBOOT_SIGNATURE_KEY_FILE'].strip('"'))
 imgtool = key.parent/'scripts/imgtool.py'
 # A custom signing key may live elsewhere: derive imgtool from the build cache.
 cache = (build/'CMakeCache.txt').read_text().splitlines()

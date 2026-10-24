@@ -133,8 +133,8 @@ Update=Idle
   `Backup B` means the current image was restored from B; `Unknown` means its
   origin could not be read. This label survives normal reboots and healthy checks
   until a different image is observed. It is not an executable external slot.
-- `Backup`: `Ready` means B's header, length and stored CRC pass a fresh readback
-  check; `None` means no backup has been provisioned; `Bad` means verification
+- `Backup`: `Ready` means B's header, length, stored CRC and signature against
+  either project public key pass a fresh readback check; `None` means no backup has been provisioned; `Bad` means verification
   failed. MCUboot performs cryptographic authentication before installation.
 - `Health`: `Wait/60s` while the current boot is being observed; `OK/60s` after
   one minute of main-loop progress with initialized settings and verified backup.
@@ -711,6 +711,15 @@ readback and signature verification it queues
 the device waits for the modem to accept the completion SMS before rebooting.
 Acceptance is not proof of handset delivery. Download/verification failures
 return an `ERR OTA ...` reply without requesting an install reboot.
+
+The sender also receives short stage notices: downloading firmware, download
+complete/saving firmware, and checking the saved firmware signature. During a
+long download or flash copy, current percentages are sent at 25% boundaries
+(at least 30 seconds apart), or about once per minute. A data pause is reported
+as waiting for download data. Fast jobs can skip intermediate percentages.
+Progress is best-effort: one optional notice at most is queued, old unsent stages
+are superseded, and terminal replies take priority. Progress delivery is not required for the update to continue, and the final
+verified/error reply remains essential.
 
 Use `getotainfo` to check progress. Only one update runs at a time; the current
 image must have reached `Health=OK/60s`. Settings remain in their existing external

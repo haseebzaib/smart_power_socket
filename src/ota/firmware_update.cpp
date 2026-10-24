@@ -35,6 +35,7 @@ int backup_current(sps_boot_state &state)
     if (!rc) {
         uint32_t length, crc;
         rc = sps_image_length(primary, &length);
+        if (!rc) rc = verify_update_signature(primary, length);
         if (!rc) rc = sps_area_crc(primary, length, &crc);
         // Do not erase B if it already contains this exact healthy image.
         if (!rc && state.backup_valid && state.backup_length == length &&
@@ -61,6 +62,19 @@ int backup_current(sps_boot_state &state)
     }
     flash_area_close(primary);
     if (!rc) LOG_INF("Known-good backup B verified and committed");
+    return rc;
+}
+int verify_backup(const sps_boot_state &state)
+{
+    int rc = sps_backup_verify(&state);
+    const flash_area *backup;
+    if (!rc) {
+        rc = flash_area_open(PM_OTA_IMAGE_B_ID, &backup);
+        if (!rc) {
+            rc = verify_update_signature(backup, state.backup_length);
+            flash_area_close(backup);
+        }
+    }
     return rc;
 }
 struct lock {
@@ -95,7 +109,7 @@ int firmware_update::format_info(std::span<char> output)
         history.image_origin == SPS_ORIGIN_UPDATE_A ? "Updated" :
         history.image_origin == SPS_ORIGIN_FACTORY ? "Initial" : "Unknown";
     const char *backup = !state.backup_valid ? "None" :
-        sps_backup_verify(&state) == 0 ? "Ready" : "Bad";
+        verify_backup(state) == 0 ? "Ready" : "Bad";
     const char *reason = history.last_reason == SPS_REASON_WATCHDOG ? "Watchdog" :
         history.last_reason == SPS_REASON_IMAGE ? "Image" : "None";
     const char *update = state.recovery != SPS_RECOVERY_IDLE ? "Recovery" :
@@ -140,8 +154,19 @@ void firmware_update::poll_health(bool settingsReady)
         if (!rc && state.recovery != SPS_RECOVERY_IDLE) rc = -EBUSY;
         // Provision the first factory backup only. After an update, preserve
         // the previous version in B until the NEXT download begins.
+        if (!rc && state.backup_valid) {
+            rc = verify_backup(state);
+            if (rc == -EACCES) {
+                // A first SWD installation of project keys can retain an old
+                // SDK-signed B. Reprovision it from the newly healthy primary;
+                // keep valid backups signed by either project key unchanged.
+                LOG_WRN("Backup B is outside the current signature trust set; reprovisioning from healthy primary");
+                state.backup_valid = 0;
+                rc = sps_boot_state_save(&state);
+            }
+        }
         if (!rc && !state.backup_valid) rc = backup_current(state);
-        if (!rc) rc = sps_backup_verify(&state);
+        if (!rc) rc = verify_backup(state);
         if (!rc) rc = boot_write_img_confirmed();
         if (!rc) {
             state.failures = 0;

@@ -5,11 +5,12 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <zephyr/kernel.h>
 namespace cellular {
 class sim7080 {
 public:
     struct http_result {int code=200;uint32_t bytes=0,received=0,total=0;bool finished=true;bool downloading=false;};
-    struct message {uint64_t id;std::string text;bool pending=true;};
+    struct message {uint64_t id;std::string text;bool pending=true;int64_t queuedAt=0;bool cancelled=false;};
     std::vector<message> messages;
     std::vector<std::string> urls;
     std::vector<http_result> statusScript;
@@ -21,7 +22,15 @@ public:
     uint32_t advertisedExtra=0, progressSize=0;
     uint64_t next=1;
     std::string active;
-    bool send_sms(std::string_view,std::string_view body) {if(full)return false;messages.push_back({next++,std::string(body),true});return true;}
+    bool send_sms(std::string_view,std::string_view body) {if(!can_queue_sms())return false;messages.push_back({next++,std::string(body),true,k_uptime_get(),false});return true;}
+    bool can_queue_sms(size_t count=1) const {
+        const auto pending=std::count_if(messages.begin(),messages.end(),[](auto &m) {return m.pending;});
+        return !full && count<=24-static_cast<size_t>(pending);
+    }
+    bool cancel_queued_sms(uint64_t id) {
+        for(auto &m:messages)if(m.id==id && m.pending) {m.pending=false;m.cancelled=true;return true;}
+        return false;
+    }
     uint64_t last_sms_id() const {return next-1;}
     bool sms_pending(uint64_t id) const {for(auto &m:messages)if(m.id==id)return m.pending;return false;}
     int https_prepare(std::string_view host) {return host=="raw.githubusercontent.com"?0:-1;}

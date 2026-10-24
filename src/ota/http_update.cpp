@@ -35,11 +35,62 @@ constexpr int64_t stalledTimeoutMs=180000, completionGraceMs=10000;
 constexpr unsigned maxPollFailures=3;
 int64_t deadline=0, nextPoll=0;
 uint64_t notificationId=0;
+struct progress_notices {
+    uint64_t queuedId=0;
+    int64_t lastQueued=0;
+    unsigned downloadPercent=0, storagePercent=0;
+    std::array<char,96> pendingPhase{};
+} notices;
+constexpr int64_t progressIntervalMs=60000, checkpointIntervalMs=30000;
+
+bool queue_progress(modem_t &modem, const char *detail)
+{
+    // One optional notice at a time. Leave five free slots after inserting it
+    // for command replies and the essential OTA completion/error reply.
+    if (modem.sms_pending(notices.queuedId) || !modem.can_queue_sms(6)) return false;
+    char message[160];
+    int n=std::snprintf(message,sizeof(message),"OTA %s: %s",release.data(),detail);
+    if (n<0 || static_cast<size_t>(n)>=sizeof(message) || !modem.send_sms(recipient.data(),message)) return false;
+    notices.queuedId=modem.last_sms_id();
+    notices.lastQueued=k_uptime_get();
+    return true;
+}
+void flush_progress(modem_t &modem)
+{
+    if (notices.pendingPhase[0] && queue_progress(modem,notices.pendingPhase.data()))
+        notices.pendingPhase[0]=0;
+}
+void announce_progress(modem_t &modem, const char *detail)
+{
+    // Supersede an unsent older stage, keeping the latest stage when busy.
+    modem.cancel_queued_sms(notices.queuedId);
+    notices.queuedId=0;
+    std::snprintf(notices.pendingPhase.data(),notices.pendingPhase.size(),"%s",detail);
+    flush_progress(modem);
+}
+void stop_progress(modem_t &modem)
+{
+    modem.cancel_queued_sms(notices.queuedId);
+    notices.queuedId=0;
+    notices.pendingPhase[0]=0;
+}
+void periodic_progress(modem_t &modem, const char *detail, unsigned percent, unsigned &lastPercent)
+{
+    if (notices.pendingPhase[0]) return;
+    const int64_t elapsed=k_uptime_get()-notices.lastQueued;
+    const bool checkpoint=percent/25>lastPercent/25 && elapsed>=checkpointIntervalMs;
+    if (elapsed<progressIntervalMs && !checkpoint) return;
+    char text[96];
+    if (state==phase::manifest_wait) std::snprintf(text,sizeof(text),"Checking release information...");
+    else std::snprintf(text,sizeof(text),"%s: %u%%",detail,percent);
+    if (queue_progress(modem,text)) lastPercent=percent;
+}
 constexpr std::string_view metaFile="sps-ota.json", imageFile="sps-ota.bin";
 constexpr std::string_view base=CONFIG_SPS_OTA_BASE_URL;
 constexpr ota_manifest::target target{"smart_power_socket","bl54l15_dvk","nrf54l15",PM_APP_ADDRESS,PM_MCUBOOT_SECONDARY_SIZE-0x4000};
 void fail(modem_t &modem,const char *step,int error)
 {
+    stop_progress(modem);
     LOG_ERR("OTA failed at %s: %d; current application retained",step,error);
     if (writerActive) firmware_update::abort();
     writerActive=false;
@@ -127,12 +178,15 @@ int http_update::request(modem_t &modem,std::string_view sender,std::string_view
     ota_manifest::format_version(requested,release);
     char ack[100];std::snprintf(ack,sizeof(ack),"OTA %s accepted; checking manifest",release.data());
     if (!queue(modem,ack)) return -ENOBUFS;
+    notices={};notices.lastQueued=k_uptime_get();
     state=phase::accepted;deadline=k_uptime_get()+300000;
     LOG_INF("OTA %s requested; current image %s",release.data(),APP_VERSION_TWEAK_STRING);
     return 0;
 }
 void http_update::process(modem_t &modem)
 {
+    if (state!=phase::idle && state!=phase::accepted && state!=phase::notify_ready &&
+        state!=phase::ready_wait && state!=phase::notify_failure) flush_progress(modem);
     int rc=0;
     switch(state) {
     case phase::idle:return;
@@ -141,6 +195,7 @@ void http_update::process(modem_t &modem)
             if(k_uptime_get()>deadline) fail(modem,"acceptance SMS not submitted",-ETIMEDOUT);
             return;
         }
+        notices.lastQueued=k_uptime_get();
         state=phase::prepare;return;
     case phase::prepare: {
         auto slash=base.find('/',8);
@@ -185,6 +240,14 @@ void http_update::process(modem_t &modem)
                 fail(modem,"HTTP completion missing",-ENOMSG);return;
             }
             if(now-lastProgress>=stalledTimeoutMs) {fail(modem,"download stalled",-ETIMEDOUT);return;}
+            if (state==phase::manifest_wait) {
+                periodic_progress(modem,"",0,notices.downloadPercent);
+            } else {
+                const unsigned percent=static_cast<unsigned>(std::min<uint64_t>(99,100ULL*status.received/metadata.size));
+                const char *detail=!status.downloading?"Waiting for download confirmation":
+                    now-lastProgress>=progressIntervalMs?"Waiting for download data":"Downloading firmware";
+                periodic_progress(modem,detail,percent,notices.downloadPercent);
+            }
             return;
         }
         LOG_INF("HTTPS %s completed: HTTP %d, %u bytes",
@@ -195,6 +258,7 @@ void http_update::process(modem_t &modem)
             fail(modem,"download length",-EMSGSIZE);return;
         }
         downloadedBytes=status.bytes;
+        if (state==phase::image_wait) announce_progress(modem,"Download complete; saving firmware...");
         state=state==phase::manifest_wait?phase::manifest_read:phase::stage_prepare;
         return;
     }
@@ -220,6 +284,7 @@ void http_update::process(modem_t &modem)
     case phase::image_start:
         rc=begin_fetch(modem,metadata.file.data(),imageFile);
         if(rc) {fail(modem,"firmware HTTPS setup",rc);return;}
+        announce_progress(modem,"Downloading firmware...");
         state=phase::image_wait;return;
     case phase::stage_prepare: {
         uint32_t size;
@@ -248,7 +313,10 @@ void http_update::process(modem_t &modem)
         }
         unsigned percent=static_cast<unsigned>(100ULL*offset/metadata.size);
         if(percent/10!=oldPercent/10) LOG_INF("OTA staging: %u%% (%u/%u bytes)",percent,offset,metadata.size);
-        if(offset==metadata.size) state=phase::verify;
+        if(offset==metadata.size) {
+            announce_progress(modem,"Firmware saved; checking signature...");
+            state=phase::verify;
+        } else periodic_progress(modem,"Saving firmware",percent,notices.storagePercent);
         return;
     }
     case phase::verify: {
@@ -262,6 +330,8 @@ void http_update::process(modem_t &modem)
         if(rc) {fail(modem,"firmware verification",rc);return;}
         writerActive=false;
         modem.https_cleanup(false);
+        // An unsent optional update must not hold up the final reply/reboot.
+        stop_progress(modem);
         state=phase::notify_ready;
         return;
     }
