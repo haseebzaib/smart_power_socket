@@ -52,17 +52,33 @@ VERSION_TWEAK = 0
 EXTRAVERSION =
 ```
 
-Build with sysbuild, then run in the SDK terminal:
+A normal sysbuild now automatically refreshes `<build-dir>/dfu_application/`
+after generating `dfu_application.zip`. Changing the root `VERSION` also
+reconfigures the parent build, so the signed image and ZIP manifest use the new
+version. The package step checks the source VERSION, compiled version, signed
+header and manifest agree. A mismatch fails the build instead of silently
+preparing an old release. It preserves the original manifest bytes and named
+binary. Deleted or edited extracted files are restored on the next build.
+
+Use the SDK terminal; the example build directory here is `build-ota`:
 
 ```sh
+west build -d build-ota
 python tools/verify_ota_build.py build-ota
 ```
 
-This verifies the build and refreshes `build-ota/dfu_application/` from the latest
-`dfu_application.zip`. It checks that the ZIP payload equals this build's
-`zephyr.signed.bin`, and that the manifest size/version/target match. It preserves
-the original manifest bytes and original named binary. Extraction alone is also
-available with `python tools/prepare_ota_folder.py build-ota`.
+The second command remains recommended for full partition/signature checks; it is
+no longer required just to create/update the extracted folder. The final build
+log includes `Release folder: ... (version ..., ... bytes)`.
+
+If an older checkout left an old extracted folder, update to this code and do one
+pristine sysbuild using the command in [FOTA setup](FOTA_Setup.md#build-and-artifacts).
+For example, root VERSION major 2, minor 0, PATCHLEVEL 0, tweak 0 builds
+`2.0.0+0`; inspect the manifest in the **same build directory you just built**.
+Before this fix, the SDK ZIP could be current while a manually extracted folder
+was still old. To extract/check an existing ZIP without rebuilding, use
+`python tools/prepare_ota_folder.py build-ota`; a stale or mismatched ZIP is
+rejected. Never repair a mismatch by editing manifest versions by hand.
 
 Upload these two files together, replacing the repository's release folder:
 

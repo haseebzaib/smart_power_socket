@@ -229,7 +229,9 @@ UndefinedBehaviorSanitizer. The artifact checker uses SDK Python packages,
 `imgtool`, PyYAML and IntelHex. It checks the actual partition map/configuration,
 verifies the signed file, rejects tampered and wrong-key files, checks merged
 image addresses and emits `build-ota/ota_manifest.json` with file size/SHA-256.
-It also refreshes `build-ota/dfu_application/` from the current ZIP for publication;
+A normal sysbuild now automatically refreshes `build-ota/dfu_application/` from
+the current ZIP and rejects a source/compiled/signed/manifest version mismatch.
+The checker also refreshes this folder;
 upload its standard `manifest.json` and named `.signed.bin` together. The separate
 `ota_manifest.json` is diagnostic and is not the hosted manifest.
 It does not contact a server or a connected target.

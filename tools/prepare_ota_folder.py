@@ -9,7 +9,22 @@ import zipfile
 from pathlib import Path
 
 
-def prepare(build, output):
+def source_version(path):
+    text = path.read_text()
+    values = []
+    for field, limit in [('VERSION_MAJOR', 255), ('VERSION_MINOR', 255),
+                         ('PATCHLEVEL', 65535), ('VERSION_TWEAK', 0xffffffff)]:
+        match = re.search(rf'^{field}\s*=\s*([0-9]+)\s*$', text, re.MULTILINE)
+        if not match or int(match[1]) > limit:
+            raise ValueError(f'Invalid {field} in {path}')
+        values.append(int(match[1]))
+    extra = re.search(r'^EXTRAVERSION\s*=([^\r\n]*)$', text, re.MULTILINE)
+    if not extra or extra[1].strip():
+        raise ValueError('SPS OTA releases require EXTRAVERSION to be empty')
+    return '{}.{}.{}+{}'.format(*values)
+
+
+def prepare(build, output, version_file=None):
     with zipfile.ZipFile(build / 'dfu_application.zip') as archive:
         manifest_bytes = archive.read('manifest.json')
         manifest = json.loads(manifest_bytes)
@@ -35,6 +50,13 @@ def prepare(build, output):
     version = '{}.{}.{}+{}'.format(*struct.unpack_from('<BBHI', payload, 20))
     if magic != 0x96f3b83d or header != 0x800 or flags != 0 or version != entry['version_MCUBOOT']:
         raise ValueError('DFU header/version mismatch')
+    app_header = build / 'smart_power_socket/zephyr/include/generated/zephyr/app_version.h'
+    match = re.search(r'^#define APP_VERSION_TWEAK_STRING\s+"([^"]+)"',
+                      app_header.read_text(), re.MULTILINE)
+    if not match or match[1] != version:
+        raise ValueError('Compiled application version differs from the signed image; reconfigure/rebuild')
+    if version_file and source_version(version_file) != version:
+        raise ValueError(f'Build version {version} differs from {version_file}; reconfigure/rebuild')
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.sps-release-', dir=output) as temp:
         temp = Path(temp)
@@ -50,5 +72,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('build_dir', type=Path, nargs='?', default=Path('build-ota'))
     parser.add_argument('--output', type=Path)
+    parser.add_argument('--version-file', type=Path,
+                        help='Require the built image to match this source VERSION file')
     args = parser.parse_args()
-    prepare(args.build_dir, args.output or args.build_dir / 'dfu_application')
+    prepare(args.build_dir, args.output or args.build_dir / 'dfu_application', args.version_file)

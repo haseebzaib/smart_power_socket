@@ -102,14 +102,16 @@ version **1.0.2+0**, command **`ota=1.0.2`**. `VERSION_TWEAK` can distinguish bu
 of the same patch, for example tweak `1` gives `1.0.2+1` and `ota=1.0.2+1`.
 Keep EXTRAVERSION empty for this numeric OTA version scheme.
 
-Rebuild and regenerate/check the release folder:
+Rebuild (which automatically refreshes the release folder), then verify it:
 
 ```sh
 west build -d build-ota
 python tools/verify_ota_build.py build-ota
 ```
 
-The check refreshes `build-ota/dfu_application/`. Publish its `manifest.json` and
+The build refreshes `build-ota/dfu_application/` automatically and checks that
+VERSION, compiled version, signed header and manifest agree. The explicit checker
+also verifies signatures/partitions. Publish the folder's `manifest.json` and
 `smart_power_socket.signed.bin` **from the same build**, together in one commit,
 under `dfu_application/` on the OTA repository's `main` branch. The firmware URL
 stays the same as the folder's files are replaced. Do not hand-edit their version
