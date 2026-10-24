@@ -22,7 +22,7 @@ int verify_update_signature(const flash_area *area, uint32_t length)
     if (rc) return rc;
     if (sys_get_le16(tlv)!=0x6907 || sys_get_le16(tlv+2)!=length-protectedEnd) return -EBADMSG;
     std::array<uint8_t,64> expectedDigest{}, signature{}, actualDigest{};
-    std::array<uint8_t,64> keyHash{}, actualKeyHash{};
+    std::array<uint8_t,64> keyHash{};
     bool gotHash=false,gotSignature=false,gotKey=false;
     for (uint32_t pos=protectedEnd+4;pos<length;) {
         if (length-pos<4) return -EBADMSG;
@@ -50,9 +50,12 @@ int verify_update_signature(const flash_area *area, uint32_t length)
         pos+=size;
     }
     if (!gotHash || !gotSignature || !gotKey) return -EBADMSG;
+    const ota_public_key::key *trusted = nullptr;
+    for (const auto &candidate : ota_public_key::trusted) {
+        if (candidate.hash == keyHash) { trusted = &candidate; break; }
+    }
+    if (!trusted) return -EACCES;
     size_t n=0;
-    if (psa_hash_compute(PSA_ALG_SHA_512,ota_public_key::der.data(),ota_public_key::der.size(),actualKeyHash.data(),actualKeyHash.size(),&n)!=PSA_SUCCESS ||
-        n!=keyHash.size() || actualKeyHash!=keyHash) return -EACCES;
     psa_hash_operation_t hash=PSA_HASH_OPERATION_INIT;
     if (psa_hash_setup(&hash,PSA_ALG_SHA_512)!=PSA_SUCCESS) return -EIO;
     std::array<uint8_t,1024> chunk{};
@@ -72,7 +75,7 @@ int verify_update_signature(const flash_area *area, uint32_t length)
     psa_set_key_usage_flags(&attributes,PSA_KEY_USAGE_VERIFY_MESSAGE);
     psa_set_key_algorithm(&attributes,PSA_ALG_PURE_EDDSA);
     psa_key_id_t key;
-    auto status=psa_import_key(&attributes,ota_public_key::raw.data(),ota_public_key::raw.size(),&key);
+    auto status=psa_import_key(&attributes,trusted->raw.data(),trusted->raw.size(),&key);
     psa_reset_key_attributes(&attributes);
     if (status!=PSA_SUCCESS) return -EIO;
     status=psa_verify_message(key,PSA_ALG_PURE_EDDSA,actualDigest.data(),actualDigest.size(),signature.data(),signature.size());

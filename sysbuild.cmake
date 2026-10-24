@@ -2,6 +2,15 @@
 set(mcuboot_DTC_OVERLAY_FILE "${APP_DIR}/boards/bl54l15_dvk_nrf54l15_cpuapp.overlay" CACHE STRING "")
 set(mcuboot_EXTRA_ZEPHYR_MODULES "${APP_DIR}/modules/sps_boot" CACHE STRING "")
 
+if(SB_CONFIG_BOOTLOADER_MCUBOOT)
+  # MCUboot's built-in single-key generator reads a public PEM only. The SPS
+  # module supplies the actual two-key trust table; selected signer is separate.
+  set_config_string(mcuboot CONFIG_BOOT_SIGNATURE_KEY_FILE
+    "${APP_DIR}/keys/ota/public/primary-ed25519.pem")
+  set_property(TARGET ${DEFAULT_IMAGE} APPEND PROPERTY IMAGE_CONF_SCRIPT
+    "${APP_DIR}/sysbuild/ota_signing.cmake")
+endif()
+
 if(SB_CONFIG_BOOTLOADER_MCUBOOT AND SB_CONFIG_DFU_ZIP_APP)
   # VERSION affects both the application's signature and sysbuild's ZIP
   # metadata. Reconfigure the parent too when it changes.

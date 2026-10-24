@@ -43,10 +43,16 @@ if(CONFIG_BOOTLOADER_MCUBOOT)
     message(FATAL_ERROR "SPS OTA requires MCUboot SHA-512/Ed25519 hash signing")
   endif()
   set(ota_key_header ${CMAKE_CURRENT_BINARY_DIR}/ota_generated/ota_public_key.hpp)
-  add_custom_command(OUTPUT ${ota_key_header}
+  set(ota_key_metadata ${CMAKE_CURRENT_BINARY_DIR}/ota_generated/trusted_keys.json)
+  set(ota_public_keys
+    ${CMAKE_CURRENT_SOURCE_DIR}/keys/ota/public/primary-ed25519.pem
+    ${CMAKE_CURRENT_SOURCE_DIR}/keys/ota/public/recovery-ed25519.pem)
+  add_custom_command(OUTPUT ${ota_key_header} ${ota_key_metadata}
     COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/export_ota_key.py
-      --key ${CONFIG_MCUBOOT_SIGNATURE_KEY_FILE} --output ${ota_key_header}
-    DEPENDS ${CONFIG_MCUBOOT_SIGNATURE_KEY_FILE} tools/export_ota_key.py
+      --key ${CMAKE_CURRENT_SOURCE_DIR}/keys/ota/public/primary-ed25519.pem
+      --key ${CMAKE_CURRENT_SOURCE_DIR}/keys/ota/public/recovery-ed25519.pem
+      --output ${ota_key_header} --metadata ${ota_key_metadata}
+    DEPENDS ${ota_public_keys} tools/export_ota_key.py
     VERBATIM)
   target_sources(app PRIVATE ${ota_key_header})
   target_include_directories(app PRIVATE modules/sps_boot/src ${CMAKE_CURRENT_BINARY_DIR}/ota_generated)

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Show the public signing-key fingerprint for a build, without printing private key material."""
+"""Check the selected signer against both trusted project keys; print public fingerprints only."""
 import argparse
 import hashlib
+import json
 from pathlib import Path
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -18,6 +19,16 @@ def public_der(path):
     return key.public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
 
 
+def check_signer(path, trusted_paths):
+    # A signer must actually contain a private key, not just a public PEM.
+    key = serialization.load_pem_private_key(path.read_bytes(), password=None)
+    selected = public_der(path)
+    trusted = [public_der(public) for public in trusted_paths]
+    if len(trusted) != 2 or trusted[0] == trusted[1] or selected not in trusted:
+        raise ValueError('Signing key must match one of the two distinct project public keys')
+    return hashlib.sha256(selected).hexdigest()
+
+
 def configured_key(config, setting):
     prefix = setting + '='
     for line in config.read_text().splitlines():
@@ -26,22 +37,42 @@ def configured_key(config, setting):
     raise ValueError(f'{setting} missing in {config}')
 
 
+def trusted_build_keys(build):
+    app = json.loads((build / 'smart_power_socket/ota_generated/trusted_keys.json').read_text())
+    boot = json.loads((build / 'mcuboot/sps_keys/trusted_keys.json').read_text())
+    if app != boot or app.get('schema') != 1 or len(app.get('keys', [])) != 2:
+        raise ValueError('Application and MCUboot must trust the same two project keys')
+    ders = [bytes.fromhex(key['der']) for key in app['keys']]
+    if ders[0] == ders[1] or any(hashlib.sha256(der).hexdigest() != key['sha256']
+                              for der, key in zip(ders, app['keys'])):
+        raise ValueError('Invalid/duplicate public key in generated trust metadata')
+    return app['keys']
+
+
 def inspect_build(build):
     boot_key = configured_key(build / 'mcuboot/zephyr/.config', 'CONFIG_BOOT_SIGNATURE_KEY_FILE')
     app_key = configured_key(build / 'smart_power_socket/zephyr/.config', 'CONFIG_MCUBOOT_SIGNATURE_KEY_FILE')
-    boot_public, app_public = public_der(boot_key), public_der(app_key)
-    if boot_public != app_public:
-        raise ValueError('Application and MCUboot use different public signing keys')
-    fingerprint = hashlib.sha256(boot_public).hexdigest()
-    return boot_key, app_key, fingerprint
+    trusted = [bytes.fromhex(key['der']) for key in trusted_build_keys(build)]
+    selected = public_der(app_key)
+    if public_der(boot_key) not in trusted or selected not in trusted:
+        raise ValueError('Configured boot/signing key is outside the project trust set')
+    return boot_key, app_key, hashlib.sha256(selected).hexdigest()
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('build_dir', type=Path, nargs='?', default=Path('build-ota'))
+    parser.add_argument('--check-signing-key', type=Path)
+    parser.add_argument('--trusted-key', type=Path, action='append', default=[])
     args = parser.parse_args()
-    boot, app, fingerprint = inspect_build(args.build_dir)
-    print(f'MCUboot key file: {boot}')
-    print(f'Application key file: {app}')
-    print(f'Ed25519 public-key SHA-256: {fingerprint}')
-    print('Application/bootloader public keys match. Compare this fingerprint on both build machines.')
+    if args.check_signing_key:
+        fingerprint = check_signer(args.check_signing_key, args.trusted_key)
+        print(f'Selected signer public-key SHA-256: {fingerprint}')
+    else:
+        boot, app, fingerprint = inspect_build(args.build_dir)
+        print(f'MCUboot public key file: {boot}')
+        print(f'Application signing key file: {app}')
+        print(f'Selected signer public-key SHA-256: {fingerprint}')
+        for key in trusted_build_keys(args.build_dir):
+            print(f'Trusted {key["name"]}: {key["sha256"]}')
+        print('Both project keys are trusted by the app and MCUboot; compare fingerprints on other machines.')

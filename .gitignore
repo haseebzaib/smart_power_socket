@@ -7,3 +7,6 @@
 
 # Python tooling
 __pycache__/
+
+# # Keep signing secrets local until the source repository is verified private.
+# /keys/ota/private/
