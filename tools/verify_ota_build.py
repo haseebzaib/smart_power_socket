@@ -43,6 +43,13 @@ app = build/'smart_power_socket/zephyr'
 boot = build/'mcuboot/zephyr'
 ac = config(app/'.config')
 bc = config(boot/'.config')
+assert bc.get('CONFIG_FPROTECT') != 'y'
+assert bc.get('CONFIG_NCS_MCUBOOT_DISABLE_SELF_RWX') != 'y'
+assert bc['CONFIG_BOOT_SIGNATURE_TYPE_ED25519'] == 'y'
+boot_image = (boot/'zephyr.bin').read_bytes()
+assert len(boot_image) <= parts['mcuboot']['size']
+assert b'Protect mcuboot flash failed' not in boot_image, 'Disabled protection branch is still present'
+print('PASS: 128 KiB bootloader reservation, self-protection disabled, Ed25519 verification enabled')
 for k in ['BOOT_GO_HOOKS', 'BOOT_VALIDATE_SLOT0', 'BOOT_SWAP_USING_SCRATCH', 'BOOT_WATCHDOG_FEED', 'WATCHDOG', 'MULTITHREADING']:
     assert bc['CONFIG_'+k] == 'y', k
 assert ac['CONFIG_BOOTLOADER_MCUBOOT']=='y'

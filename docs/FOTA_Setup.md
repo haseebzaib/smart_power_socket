@@ -148,7 +148,7 @@ update file must fit within **0xfc000 bytes (1,032,192 bytes)**, leaving a
 conservative 16 KiB for MCUboot swap trailers. That limit includes the 2 KiB
 header, firmware payload and TLVs, not just the application executable.
 
-MCUboot occupies internal `0x000000..0x020000` (128 KiB). The signed primary
+MCUboot reserves internal `0x000000..0x020000` (128 KiB). The signed primary
 starts at `0x020000`; application vectors/code start at `0x020800`. A matching
 SWD installation of MCUboot plus the newly linked application is required. The
 new 20-second handoff is incompatible with the earlier 30-second boot watchdog;
@@ -162,6 +162,45 @@ at `0x202000`, size `0x2000`; changing global `CONFIG_NVS_DATA_CRC` was avoided 
 retain the existing settings format. Its record ABI in `sps_boot.h` must remain
 compatible between MCUboot and future application releases. Settings/calibration
 schema changes also need backward compatibility with the firmware retained in B.
+
+## Bootloader self-protection disabled
+
+The current profile explicitly selects:
+
+```text
+CONFIG_FPROTECT=n
+CONFIG_NCS_MCUBOOT_DISABLE_SELF_RWX=n
+```
+
+This disables MCUboot's RRAM self-protection. It is separate from firmware-image
+verification: Ed25519 signature verification and `CONFIG_BOOT_VALIDATE_SLOT0=y`
+remain enabled. Invalid update signatures are still rejected before installation.
+The watchdog, rollback journal and external settings behavior do not change.
+
+The first-board error `Protect mcuboot flash failed, cancel startup` came from
+reserving 128 KiB while FPROTECT was enabled. In NCS 3.2.4 the two RRAMC protection
+regions can cover at most 62 KiB together, and MCUboot's 4 KiB request alignment
+makes a 60 KiB partition the largest fitting size with that configuration.
+[Nordic also documents disabling FPROTECT for a larger bootloader](https://devzone.nordicsemi.com/f/nordic-q-a/126139/in-ncs-version-3-2-0-if-i-change-the-mcuboot-partition-size-to-64kb-the-system-fails-to-start/557031).
+
+Per the requested profile, the bootloader reservation is now 128 KiB again,
+FPROTECT is disabled, and regular immediate RTT logging is restored. The previous
+60 KiB restriction, unused gap and protection-size guards have been removed.
+`tools/verify_ota_build.py` checks that self-protection is disabled, the executable
+fits the reservation, and signature verification remains configured and passes
+real image verification checks.
+
+The tradeoff is that application code or an erroneous flash write can overwrite
+MCUboot. A/B recovery restores only the application; it cannot repair a damaged
+bootloader, which would need SWD reprogramming. This choice removes bootloader
+write protection, not the image-signature checks.
+
+Reflash **the merged MCUboot/application image** to apply the bootloader option.
+Application code remains at 0x20800 and every external partition keeps its address.
+No external-flash erase is needed. Empty backup B is expected before the first
+healthy application run: the protection failure prevented the application from
+reaching the one-minute backup provisioning step. A stored failure streak clears
+on a non-watchdog reset or after the healthy check succeeds.
 
 ## Build and artifacts
 

@@ -87,7 +87,10 @@ successful settings initialization or persistence.
 
 ## Internal storage
 
-MCUboot now occupies internal `0x000000..0x020000` (128 KiB). The 1 MiB primary
+MCUboot reserves internal `0x000000..0x020000` (128 KiB). Its self-protection is
+disabled in this profile; image signature verification remains enabled. See
+[FOTA setup](FOTA_Setup.md#bootloader-self-protection-disabled) for the tradeoff.
+The 1 MiB primary
 slot starts at `0x020000`, with a 2 KiB header and application code at `0x020800`.
 The remaining internal area before the old settings reservation is unused.
 
