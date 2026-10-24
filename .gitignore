@@ -4,3 +4,6 @@
 
 # build
 /build*/
+
+# Python tooling
+__pycache__/

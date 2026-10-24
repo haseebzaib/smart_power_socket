@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 import yaml
 from intelhex import IntelHex
+from ota_key_info import inspect_build
 
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('build_dir', type=Path, nargs='?', default=Path('build-ota'))
@@ -66,6 +67,8 @@ assert bc.get('CONFIG_MCUBOOT_HW_ROLLBACK_PROT') != 'y'
 # Keep existing settings readable: the private boot record has its own CRC.
 assert ac.get('CONFIG_NVS_DATA_CRC') != 'y'
 print('PASS: partition boundaries, settings address and boot configurations')
+_, _, key_fingerprint = inspect_build(build)
+print(f'PASS: matching app/MCUboot public key; SHA-256 {key_fingerprint}')
 
 image = app/'zephyr.signed.bin'
 b = image.read_bytes()

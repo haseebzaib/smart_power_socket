@@ -4,7 +4,9 @@ This profile is for `bl54l15_dvk/nrf54l15/cpuapp` on the custom SPS carrier,
 using the MX25R6435FZNIL0 external flash. It builds MCUboot and a signed application
 with NCS 3.2.4. Cellular HTTPS updates are available through `ota=<version>`;
 see [HTTP OTA](HTTP_OTA.md) for repository configuration, release files and use.
-BLE transfer and fleet rollout remain future work.
+BLE transfer and fleet rollout remain future work. HTTPS transport checks include
+native-modem idle reconciliation, bounded status-query retries, progress/size
+limits and recovery of uncertain file sessions; see HTTP_OTA.md for deadlines.
 
 ## Execution and update flow
 
@@ -126,7 +128,9 @@ See [the command reference](all_cmds.md#getotainfo) for the response and field
 meanings. The command reports internal execution, current image origin, freshly
 checked backup readiness, health state, application boot count, total watchdog
 resets, current failure streak, completed recovery count/latest reason and update
-state. It does not expose AT commands or trigger an update.
+state. It also reports `FW`, the running image version. It does not expose AT
+commands or trigger an update. See [signing and release versions](OTA_signing_and_releases.md)
+for checking keys across build machines and preparing a version increment.
 
 History has its own CRC/readback-checked NVS record (ID 2), leaving the original
 boot-policy ABI (ID 1) and settings format unchanged. The bootloader commits the
@@ -233,8 +237,8 @@ It does not contact a server or a connected target.
 - Factory/SWD image: `build-ota/merged.hex` (MCUboot plus signed application).
 - Application OTA file: `build-ota/smart_power_socket/zephyr/zephyr.signed.bin`.
 - MCUboot image: `build-ota/mcuboot/zephyr/zephyr.hex`.
-- Image version: root `VERSION`, currently `1.0.0+0`. Increment for each release;
-  SMS reports use the same generated `1.0.0+0` version, replacing `001.00`.
+- Image version: root `VERSION`, currently `1.0.1+0`. Increment for each release;
+  SMS reports use the same generated MCUboot version, replacing `001.00`.
 - Test-only SDK signing key is currently selected by sysbuild. Before deploying
   remote updates, configure `SB_CONFIG_BOOT_SIGNATURE_KEY_FILE` with your own
   protected Ed25519 key and install a matching MCUboot once. Keep the private

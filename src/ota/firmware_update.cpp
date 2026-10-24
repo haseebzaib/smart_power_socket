@@ -10,6 +10,7 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <zephyr/app_version.h>
 #include <zephyr/dfu/mcuboot.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -103,12 +104,23 @@ int firmware_update::format_info(std::span<char> output)
     if (state.recovery == SPS_RECOVERY_IDLE && http_update::busy()) update = http_update::phase_name();
 #endif
     int n = std::snprintf(output.data(), output.size(),
-        "OTA\nRun=Internal\nFrom=%s\nBackup=%s\nHealth=%s/%us\nBoots=%u WDT=%u\n"
+        "OTA\nFW=%s\nRun=Internal\nFrom=%s\nBackup=%s\nHealth=%s/%us\nBoots=%u WDT=%u\n"
         "Streak=%u/3\nRecoveries=%u\nLast=%s\nUpdate=%s",
-        source, backup, state.healthy ? "OK" : "Wait",
+        APP_VERSION_TWEAK_STRING, source, backup, state.healthy ? "OK" : "Wait",
         static_cast<unsigned>(SPS_HEALTHY_MS / 1000U),
         static_cast<unsigned>(history.app_boots), static_cast<unsigned>(history.watchdog_resets),
         static_cast<unsigned>(state.failures), static_cast<unsigned>(history.recoveries), reason, update);
+    if (n > 160) {
+        // Preserve the full image version and exact counters even when long
+        // versions/cumulative counts need compact labels to fit one SMS.
+        n = std::snprintf(output.data(), output.size(),
+            "FW=%s\nRun=Int\nFrom=%s\nB=%s\nHealth=%s/%us\nBoots=%u WDT=%u\n"
+            "Streak=%u/3\nRec=%u\nLast=%s\nUpd=%s",
+            APP_VERSION_TWEAK_STRING, source, backup, state.healthy ? "OK" : "Wait",
+            static_cast<unsigned>(SPS_HEALTHY_MS / 1000U),
+            static_cast<unsigned>(history.app_boots), static_cast<unsigned>(history.watchdog_resets),
+            static_cast<unsigned>(state.failures), static_cast<unsigned>(history.recoveries), reason, update);
+    }
     return n < 0 || n > 160 || static_cast<std::size_t>(n) >= output.size() ? -ENOSPC : n;
 }
 void firmware_update::poll_health(bool settingsReady)

@@ -89,9 +89,15 @@ namespace cellular
                 [id](const auto &message) { return message.active && message.id == id; });
         }
 #if defined(CONFIG_SPS_HTTP_OTA)
-        struct http_result { int code = 0; uint32_t bytes = 0, received = 0, total = 0; bool finished = false; };
+        struct http_result {
+            int code = 0;
+            uint32_t bytes = 0, received = 0, total = 0;
+            bool finished = false;
+            bool downloading = false;
+        };
         int https_prepare(std::string_view hostname);
-        int https_start(std::string_view url, std::string_view localFile);
+        int https_start(std::string_view url, std::string_view localFile,
+                        uint32_t maxBytes = UINT32_MAX);
         int https_poll(http_result &result);
         void https_cleanup(bool cancel);
         int file_open();
@@ -105,7 +111,11 @@ namespace cellular
     private:
 #if defined(CONFIG_SPS_HTTP_OTA)
         static bool http_notification(std::string_view line, void *self);
+        int read_http_progress(http_result &result);
         bool httpActive_ = false, fileOpen_ = false;
+        bool httpMayBeRunning_ = false, fileNeedsSync_ = true;
+        uint32_t httpMaxBytes_ = UINT32_MAX;
+        std::array<char, 101> httpHost_{};
         http_result httpResult_{};
 #endif
         bool send_sms_single(std::string_view number, std::string_view body);

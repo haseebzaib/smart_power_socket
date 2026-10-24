@@ -1,6 +1,7 @@
 // Production writer + signature verifier, with NOR/journal APIs simulated in RAM.
 #include "ota/firmware_update.hpp"
 #include "sps_boot.h"
+#include <zephyr/app_version.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/crc.h>
 #include <psa/crypto.h>
@@ -12,9 +13,11 @@
 #include <fstream>
 #include <iterator>
 #include <vector>
+#include <string_view>
 static std::array<std::vector<uint8_t>,3> nor;
 static std::array<flash_area,3> areas;
 static sps_boot_state state{};
+static sps_boot_history history{};
 static int64_t now;
 static int pending;
 static std::vector<char> events;
@@ -33,7 +36,7 @@ int boot_write_img_confirmed() {return 0;}
 extern "C" {
 int sps_boot_state_load(sps_boot_state *s) {*s=state;return 0;}
 int sps_boot_state_save(sps_boot_state *s) {state=*s;return 0;}
-int sps_boot_history_load(sps_boot_history *s) {*s={};return 0;}
+int sps_boot_history_load(sps_boot_history *s) {*s=history;return 0;}
 int sps_area_crc(const flash_area *a,uint32_t n,uint32_t *crc) {*crc=crc32_ieee_update(0,a->data,n);return 0;}
 int sps_image_length(const flash_area *a,uint32_t *n) {
     if(sys_get_le32(a->data)!=0x96f3b83d)return -EBADMSG;
@@ -55,6 +58,19 @@ int main(int argc,char **argv) {
     assert(!firmware_update::init());assert(firmware_update::ready_for_update()==-EAGAIN);
     firmware_update::poll_health(true);now=60000;firmware_update::poll_health(true);
     assert(!firmware_update::ready_for_update());
+    std::array<char,161> info{};
+    int infoLength=firmware_update::format_info(info);
+    assert(infoLength>0 && infoLength<=160);
+    assert(std::string_view(info.data()).find("FW=" APP_VERSION_TWEAK_STRING)!=std::string_view::npos);
+    history.app_boots=history.watchdog_resets=history.recoveries=UINT32_MAX;
+    history.image_origin=SPS_ORIGIN_BACKUP_B;history.last_reason=SPS_REASON_WATCHDOG;
+    state.recovery=SPS_RECOVERY_REQUEST;state.failures=3;state.healthy=0;
+    infoLength=firmware_update::format_info(info);
+    assert(infoLength>0 && infoLength<=160);
+    const std::string_view text(info.data());
+    assert(text.find("FW=" APP_VERSION_TWEAK_STRING)!=text.npos && text.find("4294967295")!=text.npos);
+    state.recovery=SPS_RECOVERY_IDLE;state.failures=0;state.healthy=1;
+    puts("PASS: OTA SMS includes full running version and exact maximum counters within 160 characters");
     auto hash=[](const std::vector<uint8_t> &b) {std::array<uint8_t,32> h{};size_t n;assert(!psa_hash_compute(256,b.data(),b.size(),h.data(),h.size(),&n));return h;};
     auto feed=[](const std::vector<uint8_t> &b) {for(size_t pos=0;pos<b.size();pos+=1024)assert(!firmware_update::write({b.data()+pos,std::min<size_t>(1024,b.size()-pos)}));};
     assert(!firmware_update::begin(image.size()));feed(image);

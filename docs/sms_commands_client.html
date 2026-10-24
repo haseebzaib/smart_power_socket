@@ -72,7 +72,7 @@ RSL=-101
 Batt=4.44
 Lat=42.027998
 Lon=-91.631620
-FW=1.0.0+0
+FW=1.0.1+0
 HBD=0.000
 UpDays=0.123</pre></td>
       <td><pre>Outlet=1111
@@ -86,7 +86,7 @@ UpDays=0.123</pre></td>
   <h2>Get Hardware Info</h2>
   <p>Send <code>gethwinfo</code> (case-insensitive, no arguments). One SMS gives a
   compact hardware/runtime summary.</p>
-  <pre>nRF54L15 FW=1.0.0+0
+  <pre>nRF54L15 FW=1.0.1+0
 CPU avg=3.2%
 Uptime=0d 1h 48m
 Stack peak%=Main:28 Log:44 Max:78
@@ -108,6 +108,7 @@ SMS queue=2/24</pre>
   <p>Send <code>getotainfo</code> (case-insensitive, no arguments). One SMS reports
   firmware-update status and persistent recovery history.</p>
   <pre>OTA
+FW=1.0.1+0
 Run=Internal
 From=Backup B
 Backup=Ready
@@ -117,7 +118,8 @@ Streak=0/3
 Recoveries=1
 Last=Watchdog
 Update=Idle</pre>
-  <p>Run is always Internal. From is Initial, Updated, Backup B or Unknown:
+  <p>FW is the running firmware version; check it after an update or recovery.
+  Run is always Internal. From is Initial, Updated, Backup B or Unknown:
   Backup B identifies firmware restored from the recovery copy; Updated means
   a different image was observed through OTA or SWD. Backup is Ready, None or Bad,
   checked again when this command runs. Health is Wait/60s or OK/60s after one
@@ -129,7 +131,10 @@ Update=Idle</pre>
   <p>Counts start with the updated bootloader and persist in external flash.
   Recovery housekeeping reboots are excluded from Boots. This is a status query;
   it does not start an update. Older firmware without this command cannot answer
-  it after rollback. See <a href="FOTA_Setup.md">FOTA setup</a> for details.</p>
+  it after rollback. Long versions/counters can use compact labels Run=Int, B (Backup),
+  Rec (Recoveries), and Upd (Update), preserving all values in one SMS. See
+  <a href="OTA_signing_and_releases.md">signing and release versions</a> and
+  <a href="FOTA_Setup.md">FOTA setup</a> for details.</p>
 
   <h2>Get Cellular Info</h2>
   <p>Send <code>getcellularinfo</code> (case-insensitive, no arguments).
@@ -334,7 +339,7 @@ RSL=-101
 Batt=4.44
 Lat=42.027998
 Lon=-91.631620
-FW=1.0.0+0
+FW=1.0.1+0
 HBD=0.000
 UpDays=0.001</pre></td>
       <td><pre>Outlet=1111
@@ -357,7 +362,7 @@ RSL=-101
 Batt=4.44
 Lat=42.027998
 Lon=-91.631620
-FW=1.0.0+0
+FW=1.0.1+0
 HBD=0.000</pre></td>
     </tr>
   </table>
@@ -378,7 +383,7 @@ RSL=-101
 Batt=4.44
 Lat=42.027998
 Lon=-91.631620
-FW=1.0.0+0
+FW=1.0.1+0
 HBD=0.000</pre></td></tr>
   </table>
   <p>No incoming command is required and no outlet report follows this alert.
@@ -401,7 +406,7 @@ RSL=-101
 Batt=4.44
 Lat=42.027998
 Lon=-91.631620
-FW=1.0.0+0
+FW=1.0.1+0
 HBD=0.000</pre></td>
       <td><pre>Outlet=1111
 1=119.640V,0.001A,-0.064W
@@ -474,8 +479,10 @@ OTA 1.0.1+0 verified; rebooting to install</pre>
   <p>Use <code>getotainfo</code> for progress. Only one update can run, and the
   current firmware must show Health=OK/60s. A stages the update; B keeps the
   previous healthy firmware for recovery. Settings retain their partition.</p>
-  <p>The repository URL must first be configured; otherwise the reply is
-  ERR OTA URL not configured. See <a href="HTTP_OTA.md">HTTP OTA</a> for publishing
+  <p>The BL54L15 profile uses <code>haseebzaib/SPS_OTA_UPDATE</code>, branch
+  <code>main</code>, folder <code>dfu_application/</code>. Upload the release files
+  before testing. A profile without a configured URL replies ERR OTA URL not configured.
+  See <a href="HTTP_OTA.md">HTTP OTA</a> for publishing
   the two standard DFU files, configuration and first-unit testing, and
   <a href="FOTA_Setup.md">FOTA setup</a> for recovery/build details. BLE is future work.</p>
 </body>

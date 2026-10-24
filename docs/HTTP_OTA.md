@@ -2,10 +2,12 @@
 
 Send `ota=1.0.1` to install release `1.0.1+0`, or include the build number:
 `ota=1.0.1+2`. Commands are case-insensitive. The existing SMS sender rules apply.
-Only one update can run at a time. `getotainfo` shows its progress.
+Only one update can run at a time. `getotainfo` shows its progress and the running
+firmware version (`FW`). See [signing and release versions](OTA_signing_and_releases.md)
+for the two-machine key setup and the 1.0.0 SWD to 1.0.1 OTA test sequence.
 
 The firmware version now comes from the root `VERSION` file for both signing and
-SMS reports. The current source version is `1.0.0+0`; the old `001.00` SMS label is
+SMS reports. The current source version is `1.0.1+0`; the old `001.00` SMS label is
 replaced by this same MCUboot version. Increment `VERSION` before each release.
 An update to the version already running is rejected; an older signed version is
 allowed deliberately for recovery/testing. Version components must fit MCUboot:
@@ -13,16 +15,21 @@ major/minor 0–255, patch 0–65535, build 0–4294967295.
 
 ## Configure the repository
 
-Create a public repository under `haseebzaib`. Add this setting to
-`boards/bl54l15_dvk_nrf54l15_cpuapp.conf` with your actual repository and branch:
+The carrier profile uses the public
+[SPS_OTA_UPDATE repository](https://github.com/haseebzaib/SPS_OTA_UPDATE), branch
+`main`. This setting is in `boards/bl54l15_dvk_nrf54l15_cpuapp.conf`:
 
 ```ini
-CONFIG_SPS_OTA_BASE_URL="https://raw.githubusercontent.com/haseebzaib/REPO/main/dfu_application/"
+CONFIG_SPS_OTA_BASE_URL="https://raw.githubusercontent.com/haseebzaib/SPS_OTA_UPDATE/main/dfu_application/"
 ```
 
-`REPO` is a placeholder. The default is empty, so `ota=...` currently replies
-`ERR OTA URL not configured`. The GitHub profile/repository webpage is not a
-file-download URL. Use the raw HTTPS directory URL; its `manifest.json` and binary
+Release **1.0.1+0** is published in this directory for the first test. Its raw
+manifest and signed binary returned HTTP 200 directly and matched the local
+build byte-for-byte. For future releases, publish the generated pair as below.
+Kconfig's generic default remains empty; another profile that
+does not set the URL replies `ERR OTA URL not configured`. The GitHub
+profile/repository webpage is not a file-download URL. Use the raw HTTPS
+directory URL; its `manifest.json` and binary
 must return HTTP 200 directly. Redirects and private repositories are unsupported.
 The configured host/path must use letters, numbers, dots, hyphens, underscores
 and slashes; URL credentials, query strings and custom ports are unsupported.
@@ -121,7 +128,8 @@ reset may install the verified image even if the completion SMS was still pendin
 `getotainfo` Update values include `Checking`, `Manifest`, `Download`, `Stage`,
 `Verify`, `Pending`, `Failed`, `Idle`, and `Recovery`. A failed job returns to Idle
 once its error response is queued. Logs name the accepted manifest/version/length,
-staging progress in roughly 10% steps, signature/readback result and reboot.
+HTTPS byte progress about every 30 seconds, staging progress in roughly 10%
+steps, signature/readback result and reboot.
 
 ## Modem and verification limits
 
@@ -129,8 +137,33 @@ The implementation follows the HTTP-to-filesystem/CFS approach in the supplied
 SPA reference, with strict binary framing. TLS 1.2 and host SNI are configured.
 The modem needs enough free filesystem space for the signed image and manifest;
 its filesystem may limit usable releases below the external slot's 1,032,192-byte
-limit. Each download has a 30-minute application deadline. Location refresh is
-paused during a job to keep its long modem query out of the download path.
+limit. Each download has a 30-minute overall application deadline, plus a
+three-minute limit without increasing received-byte progress. Idle without a
+final HTTP result gets a 10-second grace period and then fails; an idle modem or
+a complete-looking file is never treated as HTTP success by itself. Read-only
+status queries tolerate up to two consecutive failures, with five-second spacing
+before retry; the third consecutive failure aborts the job.
+The start-download command and partial binary reads are not blindly retried.
+Location refresh is paused during a job to keep its long modem query out of the
+download path.
+
+Before opening/deleting a destination, the transport queries native modem state.
+A download can survive an MCU reset because the modem remains powered. If one is
+still active, the new request fails as busy, and failure cleanup cancels the old
+transfer through PDP deactivation. Retry the OTA command after data reconnects.
+A lost start-command OK also leaves the request tracked as possibly active, so
+cleanup reconciles/cancels it. An accepted PDP-deactivation command does not by itself prove the HTTP engine
+has stopped; every later request must pass the native-idle check, including
+after a failed cancellation. File sessions are resynchronized after startup or a
+failed close. A timed-out or malformed file-size response cannot authorize
+deleting/reusing the old destination.
+
+The HTTPS URL must use the host configured for TLS/SNI. Progress reports are
+checked against the requested file-size bound; unknown total length (zero) is
+allowed, but downloaded byte counts must stay within the limit. A final HTTP 200
+is still required. Both manifest and binary filesystem lengths must agree with
+the HTTP completion report. Progress limits are enforced when the application
+polls the modem; they do not impose a native filesystem quota.
 
 Server certificate-chain validation depends on the SIM7080 firmware's HTTPTOFS
 TLS profile and provisioned certificates; this implementation does not provision
@@ -140,13 +173,19 @@ Ed25519 signature before arming and again by MCUboot. Continue to use the same
 signing key across application/bootloader releases; the SDK default key currently
 selected in sysbuild is for testing. See the signing notes in FOTA_Setup.md.
 
+The host tests require a C/C++20 toolchain with sanitizers, OpenSSL development
+headers/libraries, and the NCS/Zephyr source tree recorded in the build cache.
+
 The modem commands/framing are described in the SIMCom-authored
 [AT command manual](https://m5stack.oss-cn-shenzhen.aliyuncs.com/resource/docs/datasheet/unit/sim7080g/en/SIM7070_SIM7080_SIM7090%20Series_AT%20Command%20Manual_V1.04.pdf)
 and [HTTP(S) application note](https://files.waveshare.com/upload/b/bb/SIM7070_SIM7080_SIM7090_Series_HTTP(S)_Application_Note_V1.02.pdf).
 
 Host checks execute the production AT parser, modem HTTPS/file methods, manifest
 parser with the SDK's JSON implementation, signature verifier with real OpenSSL
-crypto, and controller success/failure/SMS sequencing. MCUboot/app builds and
+crypto, and controller success/failure/SMS sequencing. They include lost replies,
+completion during a failed query, duplicate URCs, an orphan native transfer,
+size-limit violations, stalled downloads, missing completion and CFS recovery.
+MCUboot/app builds and
 signed-artifact checks are separate. Run:
 
 ```sh

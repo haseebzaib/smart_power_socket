@@ -28,7 +28,11 @@ ota_manifest::version requested;
 ota_manifest::image metadata;
 psa_hash_operation_t hash=PSA_HASH_OPERATION_INIT;
 bool hashActive=false, writerActive=false;
-uint32_t offset=0;
+uint32_t offset=0, downloadedBytes=0, lastReceived=0;
+unsigned pollFailures=0;
+int64_t lastProgress=0, idleSince=-1, nextProgressLog=0;
+constexpr int64_t stalledTimeoutMs=180000, completionGraceMs=10000;
+constexpr unsigned maxPollFailures=3;
 int64_t deadline=0, nextPoll=0;
 uint64_t notificationId=0;
 constexpr std::string_view metaFile="sps-ota.json", imageFile="sps-ota.bin";
@@ -60,8 +64,15 @@ bool queue(modem_t &modem,std::string_view message)
 int begin_fetch(modem_t &modem,std::string_view file,std::string_view local)
 {
     if (!make_url(file)) return -ENAMETOOLONG;
-    int rc=modem.https_start(url.data(),local);
-    if (!rc) { deadline=k_uptime_get()+30LL*60LL*1000LL; nextPoll=0; }
+    const uint32_t limit=local==metaFile?static_cast<uint32_t>(manifest.size()-1):metadata.size;
+    int rc=modem.https_start(url.data(),local,limit);
+    if (!rc) {
+        const int64_t now=k_uptime_get();
+        deadline=now+30LL*60LL*1000LL;
+        lastProgress=nextProgressLog=now;
+        nextPoll=pollFailures=lastReceived=downloadedBytes=0;
+        idleSince=-1;
+    }
     return rc;
 }
 int read_block(modem_t &modem)
@@ -144,8 +155,38 @@ void http_update::process(modem_t &modem)
         nextPoll=k_uptime_get()+2000;
         modem_t::http_result status;
         rc=modem.https_poll(status);
-        if(rc) {fail(modem,"download status",rc);return;}
-        if(!status.finished) return;
+        if(rc) {
+            // Retry only a read-only status query. Never blindly replay the
+            // request that starts a download, nor a partially read binary chunk.
+            if ((rc==-EIO || rc==-ETIMEDOUT || rc==-EAGAIN) && ++pollFailures<maxPollFailures) {
+                LOG_WRN("HTTPS status query failed: %d; retry %u/%u",rc,pollFailures,maxPollFailures);
+                nextPoll=k_uptime_get()+5000;
+                return;
+            }
+            fail(modem,"download status",rc);return;
+        }
+        pollFailures=0;
+        const int64_t now=k_uptime_get();
+        const uint32_t limit=state==phase::manifest_wait?static_cast<uint32_t>(manifest.size()-1):metadata.size;
+        if(status.received>limit || status.total>limit) {fail(modem,"download exceeds size limit",-EFBIG);return;}
+        if(!status.finished) {
+            // HTTPTOFS can retry from byte zero. Compare with the previous
+            // sample so useful progress after a restart is not called a stall.
+            if(status.received>lastReceived) lastProgress=now;
+            lastReceived=status.received;
+            if(now>=nextProgressLog) {
+                LOG_INF("HTTPS %s: %u/%u bytes, modem %s",state==phase::manifest_wait?"manifest":"firmware",
+                    status.received,status.total,status.downloading?"downloading":"idle; awaiting HTTP result");
+                nextProgressLog=now+30000;
+            }
+            if(status.downloading) idleSince=-1;
+            else if(idleSince<0) idleSince=now;
+            if(idleSince>=0 && now-idleSince>=completionGraceMs) {
+                fail(modem,"HTTP completion missing",-ENOMSG);return;
+            }
+            if(now-lastProgress>=stalledTimeoutMs) {fail(modem,"download stalled",-ETIMEDOUT);return;}
+            return;
+        }
         LOG_INF("HTTPS %s completed: HTTP %d, %u bytes",
             state==phase::manifest_wait?"manifest":"firmware",status.code,status.bytes);
         if(status.code!=200) {fail(modem,"HTTP download status",status.code);return;}
@@ -153,6 +194,7 @@ void http_update::process(modem_t &modem)
         if(!status.bytes || (expected && status.bytes!=expected) || (!expected && status.bytes>=manifest.size())) {
             fail(modem,"download length",-EMSGSIZE);return;
         }
+        downloadedBytes=status.bytes;
         state=state==phase::manifest_wait?phase::manifest_read:phase::stage_prepare;
         return;
     }
@@ -160,7 +202,9 @@ void http_update::process(modem_t &modem)
         uint32_t size;
         rc=modem.file_open();
         if(!rc) rc=modem.file_size(metaFile,size);
-        if(rc || !size || size>=manifest.size()) {fail(modem,"manifest file size",rc?rc:-EFBIG);return;}
+        if(rc || !size || size>=manifest.size() || size!=downloadedBytes) {
+            fail(modem,"manifest file size",rc?rc:-EMSGSIZE);return;
+        }
         manifest.fill(0);
         for(uint32_t pos=0;pos<size;pos+=chunk.size()) {
             size_t count=std::min<size_t>(chunk.size(),size-pos);

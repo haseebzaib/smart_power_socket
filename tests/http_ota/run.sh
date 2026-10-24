@@ -30,3 +30,10 @@ c++ -std=c++20 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
   tests/http_ota/writer_test.cpp tests/http_ota/crypto_adapter.cpp \
   src/ota/firmware_update.cpp src/ota/image_verify.cpp -lcrypto -o "$tmp/writer_test"
 "$tmp/writer_test" "$build/smart_power_socket/zephyr/zephyr.signed.bin"
+# Exercise the longest representable MCUboot version together with max counters.
+c++ -std=c++20 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
+  '-DAPP_VERSION_TWEAK_STRING="255.255.65535+4294967295"' \
+  -Itests/http_ota/stubs -Isrc -Imodules/sps_boot/src -I"$build/smart_power_socket/ota_generated" \
+  tests/http_ota/writer_test.cpp tests/http_ota/crypto_adapter.cpp \
+  src/ota/firmware_update.cpp src/ota/image_verify.cpp -lcrypto -o "$tmp/writer_long_version_test"
+"$tmp/writer_long_version_test" "$build/smart_power_socket/zephyr/zephyr.signed.bin"

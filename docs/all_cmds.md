@@ -34,7 +34,7 @@ RSL=-101
 Batt=4.44
 Lat=42.027998
 Lon=-91.631620
-FW=1.0.0+0
+FW=1.0.1+0
 HBD=0.000
 UpDays=0.123
 ```
@@ -70,7 +70,7 @@ gethwinfo
 Example (illustrative readings):
 
 ```text
-nRF54L15 FW=1.0.0+0
+nRF54L15 FW=1.0.1+0
 CPU avg=3.2%
 Uptime=0d 1h 48m
 Stack peak%=Main:28 Log:44 Max:78
@@ -112,6 +112,7 @@ Example (illustrative):
 
 ```text
 OTA
+FW=1.0.1+0
 Run=Internal
 From=Backup B
 Backup=Ready
@@ -123,6 +124,8 @@ Last=Watchdog
 Update=Idle
 ```
 
+- `FW`: the version of the running firmware, e.g. `1.0.1+0`, from root `VERSION`.
+  Check this after an update or rollback; it is not the server/staged version.
 - `Run=Internal`: application execution always uses the internal primary slot.
   External A stages updates; external B retains the known-good recovery image.
 - `From`: `Initial` is the first firmware observed by the history tracker;
@@ -155,6 +158,10 @@ The updated MCUboot must also be installed to record history; an application-onl
 update with an older bootloader cannot populate the new history fields.
 
 The reply uses the generic SMS retry queue and is limited to 160 characters.
+For unusually long versions/counters, compact labels preserve all values:
+`Run=Int`, `B` (Backup), `Rec` (Recoveries), and `Upd` (Update).
+See [signing and release versions](OTA_signing_and_releases.md) for two-machine
+key checks and the SWD-to-OTA test sequence.
 Journal read/CRC errors return `OTA info unavailable; check boot journal logs`.
 Builds without MCUboot return `OTA not enabled in this firmware`. This command
 only reports status; it does not start an update or reset counters.
@@ -428,7 +435,7 @@ RSL=-101
 Batt=4.44
 Lat=42.027998
 Lon=-91.631620
-FW=1.0.0+0
+FW=1.0.1+0
 HBD=0.000
 UpDays=0.001
 ```
@@ -452,7 +459,7 @@ RSL=-101
 Batt=4.44
 Lat=42.027998
 Lon=-91.631620
-FW=1.0.0+0
+FW=1.0.1+0
 HBD=0.000
 ```
 
@@ -474,7 +481,7 @@ RSL=-101
 Batt=4.44
 Lat=42.027998
 Lon=-91.631620
-FW=1.0.0+0
+FW=1.0.1+0
 HBD=0.000
 ```
 
@@ -500,7 +507,7 @@ RSL=-101
 Batt=4.44
 Lat=42.027998
 Lon=-91.631620
-FW=1.0.0+0
+FW=1.0.1+0
 HBD=0.000
 ```
 
@@ -711,7 +718,8 @@ partition. Staging uses A after preserving the healthy running firmware in B.
 The application always executes internally; lifetime rollback still uses B after
 three consecutive watchdog failures.
 
-Until `CONFIG_SPS_OTA_BASE_URL` is configured, the command returns
+The BL54L15 profile uses `haseebzaib/SPS_OTA_UPDATE`, branch `main`, directory
+`dfu_application/`. A profile without `CONFIG_SPS_OTA_BASE_URL` returns
 `ERR OTA URL not configured`. The repository must host the standard manifest and
 named `.signed.bin` from the same DFU ZIP, both directly downloadable over HTTPS.
 The version already running is rejected. BLE transfer is not implemented yet.

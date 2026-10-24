@@ -57,11 +57,29 @@ int main(int argc,char **argv) {
     m=initial;m.httpCode=404;beginRequest();settle(m);assert(begins==0);
     // Manifest/image header mismatch is rejected before starting the writer.
     m=initial;m.image[22]=0;beginRequest();settle(m);assert(begins==0);
+    // A status read failure is retried; a permanent failure remains bounded.
+    m=initial;m.statusFailures=3;beginRequest();settle(m);assert(begins==0);
+    m=initial;m.advertisedExtra=1;beginRequest();settle(m);assert(begins==0);
+    assert(m.messages.back().text.find("manifest file size")!=std::string::npos);
+    m=initial;m.progressSize=5000;beginRequest();settle(m);assert(begins==0);
+    m=initial;m.stalled=true;beginRequest();auto started=now;settle(m);assert(begins==0 && now-started<200000);
+    assert(m.messages.back().text.find("download stalled")!=std::string::npos);
+    m=initial;m.missingCompletion=true;beginRequest();started=now;settle(m);assert(begins==0 && now-started<30000);
+    assert(m.messages.back().text.find("HTTP completion missing")!=std::string::npos);
+    puts("PASS: permanent query failures, size discrepancies, stalled downloads and missing completion have bounded failure paths");
+    // A native retry can restart its byte counter without stalling the job.
+    m=initial;m.manifest=release(initial.manifest,"1.0.2+0");
+    const auto manifestSize=static_cast<uint32_t>(m.manifest.size());assert(manifestSize>200);
+    m.statusScript.push_back({0,0,200,manifestSize,false,true});
+    for(unsigned i=1;i<=100;++i)m.statusScript.push_back({0,0,i,manifestSize,false,true});
+    beginRequest();settle(m);assert(begins==0);
+    assert(m.messages.back().text.find("manifest version mismatch")!=std::string::npos);
+    puts("PASS: advancing byte counts after a native retry avoid a false stall");
     // A complete transfer that fails signature/readback verification is aborted.
     m=initial;finishError=-EACCES;beginRequest();settle(m);assert(begins==1 && aborts==1 && !staged);
     puts("PASS: controller rejects version/header/HTTP errors before erasing A; verification failure aborts without reboot");
     // Successful request waits for its own acknowledgement/completion SMS IDs.
-    m=initial;finishError=0;beginRequest();
+    m=initial;finishError=0;m.statusFailures=2;beginRequest();
     for(int i=0;i<1000 && std::string_view(http_update::phase_name())!="Pending";++i)tick(m);
     assert(std::string_view(http_update::phase_name())=="Pending" && !reboots);
     m.full=true;tick(m);assert(!reboots);m.full=false;tick(m);
