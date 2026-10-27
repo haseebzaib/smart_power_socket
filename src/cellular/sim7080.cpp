@@ -78,12 +78,31 @@ namespace cellular
             }
         }
 
+        (void)configure_modem(ipCommandRetries);
+#if defined(CONFIG_SPS_HTTP_OTA)
+        if (!httpStartupChecked_) {
+            // The modem can stay powered across an MCU reset. Reconcile its
+            // native HTTP worker at boot, even if no OTA command is received.
+            httpStartupChecked_=true;
+            httpMayBeRunning_=true; // Unknown until the native query proves idle.
+            LOG_INF("Startup HTTP check: checking native modem state");
+            https_cleanup(true);
+            if (https_recovering())
+                LOG_WRN("Startup HTTP check: stale or unverified transfer; recovery scheduled");
+            else LOG_INF("Startup HTTP check: native engine idle");
+        }
+#endif
+        return 0;
+    }
+
+    bool sim7080::configure_modem(int retries)
+    {
         bool configurationOk = true;
-        auto configure_command = [this, &configurationOk](std::string_view command,
+        auto configure_command = [this, retries, &configurationOk](std::string_view command,
                                                            const char *name)
         {
             const atEngine::atResult result =
-                send_with_retry(command, ipCommandRetries, defaultCommandTimeoutMs);
+                send_with_retry(command, retries, defaultCommandTimeoutMs);
             if (result != atEngine::atResult::OK)
             {
                 LOG_WRN("%s was not applied during modem init, result %d",
@@ -150,12 +169,21 @@ namespace cellular
         {
             LOG_WRN("GSM Init Complete with configuration warnings");
         }
-        return 0;
+        return configurationOk;
     }
 
     void sim7080::loop(modemInformation &modemInfo, bool pollSms, bool allowLocation)
     {
-
+#if defined(CONFIG_SPS_HTTP_OTA)
+        (void)service_http_recovery();
+        if (https_recovering()) {
+            // Do not send ordinary queries/SMS to a restarting modem. Keep
+            // the RAM outbox and stored command messages intact for reconnect.
+            modemInformation_.smsReceived = 0;
+            modemInfo = modemInformation_;
+            return;
+        }
+#endif
         atEngine_.processRx();
         get_network();
         get_network_quality();
@@ -1086,6 +1114,9 @@ namespace cellular
 
     bool sim7080::sms_send_ready() const
     {
+#if defined(CONFIG_SPS_HTTP_OTA)
+        if (https_recovering()) return false;
+#endif
         return k_uptime_get() >= nextSmsAttemptMs_;
     }
 

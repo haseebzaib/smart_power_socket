@@ -730,6 +730,15 @@ aborts the update before A is erased.
 The application always executes internally; lifetime rollback still uses B after
 three consecutive watchdog failures.
 
+A stale modem download is cancelled and checked for idle. If it remains busy,
+the device attempts one modem restart, retaining queued SMS replies. An accepted
+job waits up to three minutes for modem/network recovery and may reply
+`Recovering modem connection; please wait...`. Failure to recover stops the job;
+it does not repeatedly reset the modem or restart the MCU.
+The same stale-transfer check runs once at MCU startup, even without an OTA
+command. An idle modem is not reset; uncertain startup HTTP state is recovered
+before ordinary modem polling and SMS submission resume.
+
 The BL54L15 profile uses `haseebzaib/SPS_OTA_UPDATE`, branch `main`, directory
 `dfu_application/`. A profile without `CONFIG_SPS_OTA_BASE_URL` returns
 `ERR OTA URL not configured`. The repository must host the standard manifest and

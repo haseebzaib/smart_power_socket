@@ -494,6 +494,13 @@ OTA 1.0.6+0 verified; rebooting to install</pre>
   firmware for recovery. Backup creation and signature checks still apply during
   update preparation; failure stops the update before A is erased.
   Settings retain their partition.</p>
+  <p>A download left active in the modem is cancelled and checked for idle.
+  If needed, one modem restart is attempted while queued SMS replies are retained.
+  An accepted job waits up to three minutes for modem/network recovery and may
+  report “Recovering modem connection; please wait...”. If recovery fails, the
+  job stops without repeatedly restarting the modem or restarting the MCU.</p>
+  <p>Stale-transfer cleanup also runs automatically when the MCU starts, without
+  waiting for an OTA command. A modem already idle is left running.</p>
   <p>The BL54L15 profile uses <code>haseebzaib/SPS_OTA_UPDATE</code>, branch
   <code>main</code>, folder <code>dfu_application/</code>. Upload the release files
   before testing. A profile without a configured URL replies ERR OTA URL not configured.

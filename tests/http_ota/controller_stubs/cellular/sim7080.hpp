@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <cstdint>
+#include <cerrno>
 #include <span>
 #include <string>
 #include <string_view>
@@ -19,6 +20,8 @@ public:
     int httpCode=200,readError=0;
     bool full=false, stalled=false, missingCompletion=false;
     unsigned statusFailures=0;
+    unsigned prepareWaits=0,imagePrepareWaits=0;
+    int prepareWaitError=-EAGAIN;
     uint32_t advertisedExtra=0, progressSize=0;
     uint64_t next=1;
     std::string active;
@@ -33,7 +36,11 @@ public:
     }
     uint64_t last_sms_id() const {return next-1;}
     bool sms_pending(uint64_t id) const {for(auto &m:messages)if(m.id==id)return m.pending;return false;}
-    int https_prepare(std::string_view host) {return host=="raw.githubusercontent.com"?0:-1;}
+    int https_prepare(std::string_view host) {
+        if(prepareWaits) {--prepareWaits;return prepareWaitError;}
+        if(active=="sps-ota.json" && imagePrepareWaits) {--imagePrepareWaits;return prepareWaitError;}
+        return host=="raw.githubusercontent.com"?0:-1;
+    }
     int https_start(std::string_view url,std::string_view name,uint32_t) {urls.emplace_back(url);active=name;return 0;}
     int https_poll(http_result &r) {
         if(statusFailures) {--statusFailures;return -5;}

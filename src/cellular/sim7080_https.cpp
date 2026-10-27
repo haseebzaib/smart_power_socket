@@ -1,4 +1,5 @@
 #include "sim7080.hpp"
+#include "system/watchdog.hpp"
 
 #include <cerrno>
 #include <charconv>
@@ -84,6 +85,8 @@ bool sim7080::http_notification(std::string_view line, void *self)
     if (!number(values, status, false) || !number(values, bytes, true)) return false;
     if (status < 100 || status > 65535) return true;
     auto &modem = *static_cast<sim7080 *>(self);
+    LOG_INF("HTTPTOFS completion: status=%u bytes=%u tracked=%u", status, bytes,
+            static_cast<unsigned>(modem.httpActive_));
     if (modem.httpActive_ && !modem.httpResult_.finished) {
         modem.httpResult_.code = static_cast<int>(status);
         modem.httpResult_.bytes = bytes;
@@ -100,6 +103,8 @@ int sim7080::https_prepare(std::string_view host)
 {
     if (!safe_host(host)) return -EINVAL;
     if (httpActive_) return -EBUSY;
+    int recovery = service_http_recovery();
+    if (recovery) return recovery;
     httpHost_.fill(0);
     if (modemInformation_.networkRegistration != 1 && modemInformation_.networkRegistration != 5)
         return -ENETDOWN;
@@ -183,12 +188,121 @@ int sim7080::read_http_progress(http_result &result)
     int rc = command_error(reply.result);
     if (rc) return rc;
     result = {};
-    return progress({response.data(), reply.responseLength}, result) ? 0 : -EBADMSG;
+    const std::string_view raw{response.data(), reply.responseLength};
+    if (!progress(raw, result)) {
+        LOG_ERR("Invalid HTTP progress response: %.*s", static_cast<int>(raw.size()), raw.data());
+        return -EBADMSG;
+    }
+    if (!httpActive_ || k_uptime_get()>=nextHttpRawLog_ || result.received!=httpResult_.received ||
+        result.downloading!=httpResult_.downloading) {
+        LOG_INF("HTTP progress response: %.*s", static_cast<int>(raw.size()), raw.data());
+        nextHttpRawLog_=k_uptime_get()+30000;
+    }
+    return 0;
+}
+
+bool sim7080::https_recovering() const
+{
+    return httpRecovery_!=http_recovery::none && httpRecovery_!=http_recovery::failed;
+}
+
+void sim7080::start_http_recovery()
+{
+    if (httpRecovery_!=http_recovery::none) return;
+    httpActive_=false;
+    httpResult_={};
+    httpMayBeRunning_=true;
+    int rc=command_error(atEngine_.send_command("AT+CNACT=0,0\r\n",commandTimeoutMs));
+    modemInformation_.dataConnected=0;
+    modemInformation_.ipAddress.fill(0);
+    copy_string_view_to_array("0.0.0.0",modemInformation_.ipAddress);
+    nextDataConnectionRetryMs_=k_uptime_get()+dataConnectionRetryIntervalMs;
+    httpRecovery_=http_recovery::wait_idle;
+    httpRecoveryDeadline_=k_uptime_get()+10000;
+    httpRecoveryNextPoll_=k_uptime_get()+1000;
+    LOG_WRN("HTTP cancellation requested through PDP deactivation: %d; checking idle for 10 s",rc);
+}
+
+int sim7080::service_http_recovery()
+{
+    if (httpRecovery_==http_recovery::none) return 0;
+    if (httpRecovery_==http_recovery::failed) return httpRecoveryError_;
+    if (k_uptime_get()<httpRecoveryNextPoll_) return -EAGAIN;
+    if (httpRecovery_==http_recovery::wait_idle) {
+        http_result native;
+        const int rc=read_http_progress(native);
+        if (!rc && !native.downloading) {
+            httpMayBeRunning_=false;
+            fileNeedsSync_=true;
+            httpRecovery_=http_recovery::none;
+            LOG_INF("HTTP cancellation verified: native engine idle");
+            return 0;
+        }
+        if (k_uptime_get()<httpRecoveryDeadline_) {
+            httpRecoveryNextPoll_=k_uptime_get()+1000;
+            return -EAGAIN;
+        }
+        LOG_WRN("HTTP engine remains busy after PDP cancellation; restarting SIM7080 once");
+        // A missing OK can mean the reset has already executed. Do not resend
+        // the state-changing command; probe AT and verify native idle instead.
+        const auto reset=atEngine_.send_command("AT+CFUN=1,1\r\n",10000);
+        if (reset!=atEngine::atResult::OK && reset!=atEngine::atResult::Timeout) {
+            httpRecoveryError_=command_error(reset);
+            httpRecovery_=http_recovery::failed;
+            LOG_ERR("SIM7080 HTTP recovery reset rejected: %d",httpRecoveryError_);
+            return httpRecoveryError_;
+        }
+        modemInformation_.networkRegistration=0;
+        modemInformation_.networkQuality=-1;
+        modemInformation_.signalValid=false;
+        modemInformation_.dataConnected=0;
+        fileOpen_=false;
+        fileNeedsSync_=true;
+        httpHost_.fill(0);
+        httpRecovery_=http_recovery::wait_restart;
+        httpRecoveryDeadline_=k_uptime_get()+60000;
+        httpRecoveryNextPoll_=k_uptime_get()+3000;
+        return -EAGAIN;
+    }
+    if (httpRecovery_==http_recovery::wait_restart) {
+        if (k_uptime_get()>=httpRecoveryDeadline_) {
+            httpRecoveryError_=-ETIMEDOUT;
+            httpRecovery_=http_recovery::failed;
+            LOG_ERR("SIM7080 HTTP recovery: modem did not become responsive within 60 s");
+            return httpRecoveryError_;
+        }
+        if (atEngine_.send_command("AT\r\n",readinessProbeTimeoutMs)!=atEngine::atResult::OK) {
+            httpRecoveryNextPoll_=k_uptime_get()+1000;
+            return -EAGAIN;
+        }
+        httpRecovery_=http_recovery::configure;
+        httpRecoveryNextPoll_=0;
+        return -EAGAIN;
+    }
+    // Each configuration command is attempted once. Its 5 s timeout and the
+    // following status query fit within this finite task-watchdog allowance.
+    app_watchdog::operation allowance{90000,"HTTP modem reconfiguration"};
+    const bool configured=configure_modem(1);
+    http_result native;
+    const int rc=configured?read_http_progress(native):-EIO;
+    if (rc || native.downloading) {
+        httpRecoveryError_=rc?rc:-EBUSY;
+        httpRecovery_=http_recovery::failed;
+        LOG_ERR("SIM7080 HTTP recovery failed: %d; destination files remain protected",httpRecoveryError_);
+        return httpRecoveryError_;
+    }
+    httpMayBeRunning_=false;
+    httpRecovery_=http_recovery::none;
+    nextDataConnectionRetryMs_=0;
+    LOG_INF("SIM7080 HTTP recovery complete; native engine idle, awaiting network reconnect; SMS outbox retained");
+    return 0;
 }
 
 int sim7080::https_start(std::string_view url, std::string_view file, uint32_t maxBytes)
 {
     if (httpActive_) return -EBUSY;
+    if (https_recovering()) return -EAGAIN;
+    if (httpRecovery_==http_recovery::failed) return httpRecoveryError_;
     if (!safe_file(file) || !maxBytes || !url.starts_with("https://") || url.size() > 255) return -EINVAL;
     auto slash = url.find('/', 8);
     if (slash == url.npos || httpHost_[0] == 0 || url.substr(8, slash - 8) != httpHost_.data()) return -EINVAL;
@@ -200,7 +314,10 @@ int sim7080::https_start(std::string_view url, std::string_view file, uint32_t m
     int rc = read_http_progress(previous);
     if (rc) return rc;
     httpMayBeRunning_ = previous.downloading;
-    if (httpMayBeRunning_) return -EBUSY;
+    if (httpMayBeRunning_) {
+        start_http_recovery();
+        return -EAGAIN;
+    }
 
     rc = file_open();
     if (rc) return rc;
@@ -220,6 +337,8 @@ int sim7080::https_start(std::string_view url, std::string_view file, uint32_t m
     rc = file_close();
     if (rc) return rc;
     std::array<char, 400> command{};
+    // Keep slow but advancing downloads viable. The independent no-progress
+    // deadline cancels/restarts a stuck engine without waiting for this timeout.
     int n = std::snprintf(command.data(), command.size(), "AT+HTTPTOFS=\"%.*s\",\"/custapp/%.*s\",1000\r\n",
         static_cast<int>(url.size()), url.data(), static_cast<int>(file.size()), file.data());
     if (n < 0 || static_cast<size_t>(n) >= command.size()) return -ENAMETOOLONG;
@@ -252,20 +371,12 @@ int sim7080::https_poll(http_result &result)
 void sim7080::https_cleanup(bool cancel)
 {
     if (file_close()) LOG_WRN("CFS close failed; session will be resynchronized before reuse");
-    if (cancel && httpMayBeRunning_) {
+    if (cancel && httpMayBeRunning_ && httpRecovery_==http_recovery::none) {
         http_result native;
         int rc = read_http_progress(native);
         if (!rc && (native.finished || !native.downloading)) {
             httpMayBeRunning_ = false;
-        } else {
-            rc = command_error(atEngine_.send_command("AT+CNACT=0,0\r\n", commandTimeoutMs));
-            modemInformation_.dataConnected = 0;
-            nextDataConnectionRetryMs_ = k_uptime_get() + dataConnectionRetryIntervalMs;
-            // PDP deactivation is asynchronous. Even its OK does not prove
-            // HTTPTOFS has stopped writing; require native idle before reuse.
-            httpMayBeRunning_ = true;
-            LOG_WRN("HTTP cancellation requested through PDP deactivation: %d", rc);
-        }
+        } else start_http_recovery();
     }
     httpActive_ = false;
     httpResult_ = {};

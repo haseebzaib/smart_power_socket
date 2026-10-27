@@ -103,6 +103,7 @@ namespace cellular
                         uint32_t maxBytes = UINT32_MAX);
         int https_poll(http_result &result);
         void https_cleanup(bool cancel);
+        bool https_recovering() const;
         int file_open();
         int file_close();
         int file_size(std::string_view name, uint32_t &size);
@@ -115,14 +116,22 @@ namespace cellular
 #if defined(CONFIG_SPS_HTTP_OTA)
         static bool http_notification(std::string_view line, void *self);
         int read_http_progress(http_result &result);
+        void start_http_recovery();
+        int service_http_recovery();
+        enum class http_recovery { none, wait_idle, wait_restart, configure, failed };
+        http_recovery httpRecovery_ = http_recovery::none;
+        int httpRecoveryError_ = 0;
+        int64_t httpRecoveryDeadline_ = 0, httpRecoveryNextPoll_ = 0, nextHttpRawLog_ = 0;
         bool httpActive_ = false, fileOpen_ = false;
         bool httpMayBeRunning_ = false, fileNeedsSync_ = true;
+        bool httpStartupChecked_ = false;
         uint32_t httpMaxBytes_ = UINT32_MAX;
         std::array<char, 101> httpHost_{};
         http_result httpResult_{};
 #endif
         bool send_sms_single(std::string_view number, std::string_view body);
         bool send_sms_long(std::string_view number, std::string_view body);
+        bool configure_modem(int retries);
 
         static constexpr std::size_t smsSingleMaxChars = 160;
         static constexpr std::size_t smsSegmentChars = 153;

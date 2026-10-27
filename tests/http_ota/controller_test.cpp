@@ -79,6 +79,25 @@ int main(int argc,char **argv) {
     beginRequest();settle(m);assert(begins==0);
     assert(m.messages.back().text.find("manifest version mismatch")!=std::string::npos);
     puts("PASS: advancing byte counts after a native retry avoid a false stall");
+    // The accepted job waits through native-engine recovery/re-registration;
+    // it must not fail immediately with setup busy or replay the HTTP start.
+    for(int error:{-EAGAIN,-ENETDOWN,-ENETUNREACH}) {
+        m=initial;m.prepareWaits=5;m.prepareWaitError=error;
+        m.manifest=release(initial.manifest,"1.0.2+0");
+        beginRequest();settle(m);
+        assert(begins==0 && m.urls.size()==1);
+        assert(m.messages.back().text.find("manifest version mismatch")!=std::string::npos);
+        assert(std::count_if(m.messages.begin(),m.messages.end(),[](auto &message) {
+            return message.text.find("Recovering modem connection")!=std::string::npos;
+        })==1);
+    }
+    m=initial;m.imagePrepareWaits=5;m.image[22]=0;
+    beginRequest();settle(m);assert(begins==0 && m.urls.size()==2);
+    m=initial;m.prepareWaits=10000;
+    beginRequest();started=now;settle(m);
+    assert(begins==0 && m.urls.empty() && now-started<190000);
+    assert(m.messages.back().text.find("modem/network recovery timeout")!=std::string::npos);
+    puts("PASS: manifest/image setup waits for modem recovery without replaying downloads; unavailable networks have a bounded deadline");
     // A complete transfer that fails signature/readback verification is aborted.
     m=initial;finishError=-EACCES;beginRequest();settle(m);assert(begins==1 && aborts==1 && !staged);
     puts("PASS: controller rejects version/header/HTTP errors before erasing A; verification failure aborts without reboot");

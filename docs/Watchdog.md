@@ -17,6 +17,10 @@ The one-minute firmware health interval is a separate OTA decision.
 - High-level OTA operations: a finite 180-second allowance for worst-case flash
   erase/archive/write/verification. The shared low-level flash loops do not feed
   the application's watchdog.
+- HTTP modem recovery reapplies APN/radio/SMS configuration under a finite
+  90-second allowance, with one attempt per configuration command. Cancellation
+  and reset readiness use timed polling between main-loop iterations; the
+  modem restart does not reset the MCU or clear pending SMS replies.
 - MCUboot uses its own hardware watchdog feeding while copying/swapping images.
   The application task-watchdog runtime does not run in the bootloader.
 

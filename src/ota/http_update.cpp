@@ -28,6 +28,7 @@ ota_manifest::version requested;
 ota_manifest::image metadata;
 psa_hash_operation_t hash=PSA_HASH_OPERATION_INIT;
 bool hashActive=false, writerActive=false;
+bool networkWaitNotified=false;
 uint32_t offset=0, downloadedBytes=0, lastReceived=0;
 unsigned pollFailures=0;
 int64_t lastProgress=0, idleSince=-1, nextProgressLog=0;
@@ -126,6 +127,15 @@ int begin_fetch(modem_t &modem,std::string_view file,std::string_view local)
     }
     return rc;
 }
+bool wait_for_network(modem_t &modem, int rc)
+{
+    if (rc!=-EAGAIN && rc!=-ENETDOWN && rc!=-ENETUNREACH) return false;
+    if (!networkWaitNotified) {
+        announce_progress(modem,"Recovering modem connection; please wait...");
+        networkWaitNotified=true;
+    }
+    return true;
+}
 int read_block(modem_t &modem)
 {
     const size_t count=std::min<size_t>(chunk.size(),metadata.size-offset);
@@ -201,11 +211,18 @@ void http_update::process(modem_t &modem)
             return;
         }
         notices.lastQueued=k_uptime_get();
+        deadline=k_uptime_get()+180000;
+        nextPoll=0;
+        networkWaitNotified=false;
         state=phase::prepare;return;
     case phase::prepare: {
+        if(k_uptime_get()>deadline) {fail(modem,"modem/network recovery timeout",-ETIMEDOUT);return;}
+        if(k_uptime_get()<nextPoll) return;
+        nextPoll=k_uptime_get()+2000;
         auto slash=base.find('/',8);
         rc=modem.https_prepare(base.substr(8,slash-8));
         if(!rc) rc=begin_fetch(modem,"manifest.json",metaFile);
+        if(wait_for_network(modem,rc)) return;
         if(rc) {fail(modem,"manifest HTTPS setup",rc);return;}
         state=phase::manifest_wait;return;
     }
@@ -284,10 +301,18 @@ void http_update::process(modem_t &modem)
         if(!rc) rc=modem.file_close();
         if(rc) {fail(modem,rc==-ESTALE?"manifest version mismatch":"manifest validation",rc);return;}
         LOG_INF("Manifest accepted: %s, version %s, %u bytes",metadata.file.data(),release.data(),metadata.size);
+        deadline=k_uptime_get()+180000;
+        nextPoll=0;
+        networkWaitNotified=false;
         state=phase::image_start;return;
     }
     case phase::image_start:
-        rc=begin_fetch(modem,metadata.file.data(),imageFile);
+        if(k_uptime_get()>deadline) {fail(modem,"modem/network recovery timeout",-ETIMEDOUT);return;}
+        if(k_uptime_get()<nextPoll) return;
+        nextPoll=k_uptime_get()+2000;
+        { auto slash=base.find('/',8);rc=modem.https_prepare(base.substr(8,slash-8)); }
+        if(!rc) rc=begin_fetch(modem,metadata.file.data(),imageFile);
+        if(wait_for_network(modem,rc)) return;
         if(rc) {fail(modem,"firmware HTTPS setup",rc);return;}
         announce_progress(modem,"Downloading firmware...");
         state=phase::image_wait;return;

@@ -190,15 +190,47 @@ Location refresh is paused during a job to keep its long modem query out of the
 download path.
 
 Before opening/deleting a destination, the transport queries native modem state.
-A download can survive an MCU reset because the modem remains powered. If one is
-still active, the new request fails as busy, and failure cleanup cancels the old
-transfer through PDP deactivation. Retry the OTA command after data reconnects.
-A lost start-command OK also leaves the request tracked as possibly active, so
-cleanup reconciles/cancels it. An accepted PDP-deactivation command does not by itself prove the HTTP engine
-has stopped; every later request must pass the native-idle check, including
-after a failed cancellation. File sessions are resynchronized after startup or a
-failed close. A timed-out or malformed file-size response cannot authorize
-deleting/reusing the old destination.
+A download can survive an MCU reset because the modem remains powered. On every
+MCU startup, after AT readiness/configuration and before ordinary modem polling
+or SMS submission, the firmware checks native HTTP state once. A stale transfer
+or a failed/unparseable status query schedules recovery immediately, without
+requiring an OTA command. An idle modem is left running. Startup logs include
+`Startup HTTP check: native engine idle` or
+`Startup HTTP check: stale or unverified transfer; recovery scheduled`.
+A previous
+download is cancelled by requesting PDP deactivation and checking native idle
+for up to 10 seconds. An OK from PDP deactivation alone is not proof of cancellation.
+If HTTP remains active or cannot be queried, the firmware issues one
+`AT+CFUN=1,1` modem restart, then probes AT for up to 60 seconds. It reapplies the
+normal APN/radio/SMS configuration once per command and verifies native HTTP idle
+before allowing destination access. A lost reset OK is not blindly replayed.
+An unsuccessful restart stays blocked without an automatic reset loop; a full
+modem power cycle can then be necessary. The MCU, relays and flash are not reset.
+
+Recovery is serviced from the modem loop, including after a failed job. Ordinary
+modem polling and SMS submission pause while the modem is cancelling/restarting;
+the existing RAM outbox and SIM-stored commands are retained for reconnect.
+Configuration has a finite 90-second task-watchdog allowance, with one attempt
+per AT command. Normal hardware/task watchdog supervision stays active.
+An accepted OTA job waits up to three minutes for setup/recovery/registration
+instead of immediately reporting setup busy. The sender receives
+`Recovering modem connection; please wait...` when submission becomes possible.
+The failed transfer itself is not silently replayed; a new OTA request downloads
+again after cancellation/reconnect.
+
+Each native HTTP attempt retains its 1000-second timeout for slow but advancing
+downloads, using the existing command form and modem-default retry count.
+The independent three-minute application no-progress deadline starts cancellation
+and bounded recovery rather than waiting for all native attempts to expire.
+The 30-minute overall deadline still applies. Logs include the actual progress reply
+on changes/about every 30 seconds, all completion codes, and cancellation/reset
+milestones. A lost start-command OK remains tracked as possibly active.
+File sessions are resynchronized after startup or a failed close. A timed-out or
+malformed file-size response cannot authorize deleting/reusing the old destination.
+
+Command/state definitions follow the [SIMCom AT command manual](https://download.mikroe.com/documents/datasheets/SIM70x0_AT_Command.pdf),
+sections 3.2.19 and 13.2.13–13.2.14. PDP cancellation clearing the HTTP worker is
+not assumed; recovery checks its actual state.
 
 The HTTPS URL must use the host configured for TLS/SNI. Progress reports are
 checked against the requested file-size bound; unknown total length (zero) is
