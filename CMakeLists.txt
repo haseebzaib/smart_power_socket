@@ -35,6 +35,9 @@ if(CONFIG_BOOTLOADER_MCUBOOT)
   if(NOT CONFIG_MBEDTLS_ENABLE_HEAP OR CONFIG_MBEDTLS_HEAP_SIZE LESS 8192)
     message(FATAL_ERROR "SPS OTA Ed25519 key import requires CONFIG_MBEDTLS_ENABLE_HEAP=y and CONFIG_MBEDTLS_HEAP_SIZE>=8192. Include the board configuration; libc heap/stack sizes do not initialize the Nordic crypto allocator.")
   endif()
+  if(CONFIG_PSA_USE_CRACEN_KEY_MANAGEMENT_DRIVER AND NOT CONFIG_PSA_NEED_CRACEN_KEY_TYPE_ECC_KEY_PAIR_IMPORT)
+    message(FATAL_ERROR "NCS 3.2.4 CRACEN requires CONFIG_PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_IMPORT=y to import Ed25519 public keys for SPS OTA verification.")
+  endif()
   target_sources(app PRIVATE
     src/ota/firmware_update.cpp
     src/ota/image_verify.cpp

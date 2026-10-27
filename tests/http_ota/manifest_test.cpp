@@ -61,6 +61,8 @@ int main(int argc,char **argv) {
     assert(verify_update_signature(&area,bytes.size())==-ENOMEM);
     testPsaImportStatus=PSA_ERROR_HARDWARE_FAILURE;
     assert(verify_update_signature(&area,bytes.size())==-EIO);
+    testPsaImportStatus=PSA_ERROR_NOT_SUPPORTED;
+    assert(verify_update_signature(&area,bytes.size())==-ENOTSUP);
     testPsaImportStatus=PSA_SUCCESS;
     testPsaVerifyStatus=PSA_ERROR_INSUFFICIENT_MEMORY;
     assert(verify_update_signature(&area,bytes.size())==-ENOMEM);

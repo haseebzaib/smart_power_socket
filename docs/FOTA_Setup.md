@@ -170,9 +170,31 @@ configuration defect; that error alone was not evidence of SPI flash failure.
 The startup health check remains disabled as requested; backup preparation and
 OTA signature checks still use the now-initialized allocator.
 
+NCS 3.2.4 also gates CRACEN's `import_ecc_public_key()` implementation on
+`CONFIG_PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_IMPORT=y`. Enabling only the public-key
+type omits that import path, returning PSA `-134` (not supported). The board
+configuration now enables it; configure/release checks reject the incomplete
+configuration. The key-import code handles only the supplied public key here;
+no firmware signing private key is compiled into the application.
+
+`tests/http_ota/sdk_key_import_test.py` executes the linked ARM CRACEN import
+function with Unicorn, using both actual project public keys. It reproduces
+`-134` in the old ELF and checks successful 255-bit import, exact copied key bytes,
+and malformed-key/policy rejection in the fixed ELF. Run with SDK Python and
+the `unicorn`/`pyelftools` modules installed:
+
+```sh
+python tests/http_ota/sdk_key_import_test.py build-ota --old-elf /path/to/old/zephyr.elf
+```
+
+Omit `--old-elf` to check only the current build. This executes actual SDK import
+code, unlike the OpenSSL host adapter; it does not emulate CRACEN signature
+hardware or prove flash/modem operation on the board.
+
 Image authentication logs now name the crypto operation and original PSA status.
 Allocation errors return `-12` (`ENOMEM`), invalid signatures/untrusted keys return
 `-13` (`EACCES`), and other crypto errors retain their PSA status in the log.
+Unsupported crypto operations return `ENOTSUP` instead of a generic I/O error.
 Backup creation names the failing step. Actual flash copy/erase/read/write errors
 log the partition address and relative offset; CRC mismatches show both CRCs.
 These diagnostics distinguish key/crypto failures from flash transport failures.

@@ -14,6 +14,7 @@ int crypto_error(const char *step, psa_status_t status)
     LOG_ERR("Image authentication: %s failed; PSA status=%d", step, static_cast<int>(status));
     if (status == PSA_ERROR_INSUFFICIENT_MEMORY) return -ENOMEM;
     if (status == PSA_ERROR_INVALID_SIGNATURE) return -EACCES;
+    if (status == PSA_ERROR_NOT_SUPPORTED) return -ENOTSUP;
     return -EIO;
 }
 }

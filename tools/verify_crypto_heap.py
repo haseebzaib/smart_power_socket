@@ -10,6 +10,9 @@ def verify_crypto_heap(config_path, elf_path):
     size = int(config.get('CONFIG_MBEDTLS_HEAP_SIZE', '0'), 0)
     if size < 8192:
         raise ValueError('SPS OTA requires an initialized crypto heap of at least 8192 bytes')
+    if (config.get('CONFIG_PSA_USE_CRACEN_KEY_MANAGEMENT_DRIVER') == 'y' and
+            config.get('CONFIG_PSA_NEED_CRACEN_KEY_TYPE_ECC_KEY_PAIR_IMPORT') != 'y'):
+        raise ValueError('NCS 3.2.4 CRACEN public-key import requires the ECC key import feature')
     with elf_path.open('rb') as source:
         elf = ELFFile(source)
         symbols = elf.get_section_by_name('.symtab')
