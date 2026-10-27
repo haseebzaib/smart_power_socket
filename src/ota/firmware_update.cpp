@@ -33,6 +33,7 @@ const flash_area *staging;
 
 int backup_current(sps_boot_state &state)
 {
+    const int64_t started=k_uptime_get();
     const flash_area *primary, *backup;
     int rc = flash_area_open(PM_MCUBOOT_PRIMARY_ID, &primary);
     if (rc) {
@@ -58,6 +59,8 @@ int backup_current(sps_boot_state &state)
             state.backup_crc == crc && sps_backup_verify(&state) == 0) {
             flash_area_close(backup);
             flash_area_close(primary);
+            LOG_INF("OTA timing: existing backup B reused; check=%lld ms",
+                    static_cast<long long>(k_uptime_get()-started));
             return 0;
         }
         if (!rc) {
@@ -80,7 +83,10 @@ int backup_current(sps_boot_state &state)
         flash_area_close(backup);
     }
     flash_area_close(primary);
-    if (!rc) LOG_INF("Known-good backup B verified and committed");
+    if (!rc) {
+        LOG_INF("Known-good backup B verified and committed");
+        LOG_INF("OTA timing: backup B creation=%lld ms",static_cast<long long>(k_uptime_get()-started));
+    }
     else LOG_ERR("Backup B creation failed at %s: %d", step, rc);
     return rc;
 }
@@ -221,12 +227,14 @@ static int prepare_download(std::size_t size, const uint8_t *sha256)
     if (!rc) rc = backup_current(state);
     if (!rc) rc = flash_area_open(PM_MCUBOOT_SECONDARY_ID, &staging);
     if (rc) return rc;
+    const int64_t erasing=k_uptime_get();
     rc = sps_area_erase(staging);
     if (rc) {
         flash_area_close(staging);
         staging = nullptr;
         return rc;
     }
+    LOG_INF("OTA timing: staging A erase=%lld ms",static_cast<long long>(k_uptime_get()-erasing));
     expectedHashKnown = sha256 != nullptr;
     if (sha256) std::copy_n(sha256, expectedHash.size(), expectedHash.begin());
     expectedSize = size;

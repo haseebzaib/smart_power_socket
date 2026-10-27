@@ -19,6 +19,8 @@ static struct sps_boot_history durable_history;
 static bool history_exists, cut_complete;
 static bool journal_exists, pending, native_busy, cut_copy, cut_arm, cut_native, fail_journal;
 static unsigned staging_erases, watchdog_feeds;
+static unsigned block_erases,sector_erases,erase_attempts;
+static int erase_error_offset=-1;
 static uint32_t cause;
 static bool task_watchdog_marker;
 static jmp_buf reboot_target;
@@ -49,7 +51,10 @@ int flash_area_write(const struct flash_area *a,size_t off,const void *buf,size_
 }
 int flash_area_erase(const struct flash_area *a,size_t off,size_t n) {
     assert(a->id != 0);
-    assert(off%4096==0 && n==4096 && off+n<=a->fa_size);
+    assert((n==4096 || n==65536) && (a->fa_off+off)%n==0 && off+n<=a->fa_size);
+    ++erase_attempts;
+    if((int)off==erase_error_offset)return -EIO;
+    if(n==65536)++block_erases;else ++sector_erases;
     if(a->id==1) { assert(!native_busy); ++staging_erases; }
     memset(flash[a->id]+off,255,n); return 0;
 }
@@ -122,6 +127,7 @@ static void setup(void) {
     history_exists=cut_complete=task_watchdog_marker=false;
     memset(&durable_history,0,sizeof(durable_history));
     cause=0; staging_erases=0;
+    erase_error_offset=-1;block_erases=sector_erases=erase_attempts=0;
     image(0,42); image(2,17);
     struct sps_boot_state s;
     assert(sps_boot_state_load(&s)==0);
@@ -212,6 +218,25 @@ int main(int argc, char **argv) {
     assert(sps_image_length(&areas[2],&length)==-EBADMSG);
     image(2,17); put16(flash[2]+0x822,3); assert(sps_image_length(&areas[2],&length)==-EBADMSG);
     puts("PASS: truncated/overflowing image metadata rejected before copy");
+    // Block batching must respect exact partition boundaries and feed between
+    // requests, including non-block-aligned areas and a 4 KiB tail.
+    setup();
+    struct flash_area subarea=areas[2];subarea.fa_off=0x100000;subarea.fa_size=0x21000;
+    memset(flash[2],0x3c,sizeof(flash[2]));
+    unsigned feeds=watchdog_feeds;
+    assert(sps_area_erase(&subarea)==0 && block_erases==2 && sector_erases==1 && erase_attempts==3);
+    assert(watchdog_feeds-feeds==3);
+    for(size_t i=0;i<subarea.fa_size;++i)assert(flash[2][i]==0xff);
+    for(size_t i=subarea.fa_size;i<sizeof(flash[2]);++i)assert(flash[2][i]==0x3c);
+    subarea.fa_off+=4096;block_erases=sector_erases=erase_attempts=0;
+    assert(!sps_area_erase(&subarea) && block_erases==1 && sector_erases==17);
+    subarea.fa_size=4097;erase_attempts=0;
+    assert(sps_area_erase(&subarea)==-EINVAL && erase_attempts==0);
+    subarea.fa_size=0x21000;subarea.fa_off=0x100000;
+    erase_error_offset=65536;erase_attempts=0;
+    assert(sps_area_erase(&subarea)==-EIO && erase_attempts==2);
+    erase_error_offset=-1;
+    puts("PASS: 64 KiB erase batching preserves boundaries, sector-aligned edges, watchdog feeds and error propagation");
     if (argc > 1) {
         FILE *file=fopen(argv[1],"rb"); assert(file);
         memset(flash[0],255,sizeof(flash[0]));

@@ -35,6 +35,10 @@ int64_t lastProgress=0, idleSince=-1, nextProgressLog=0;
 constexpr int64_t stalledTimeoutMs=180000, completionGraceMs=10000;
 constexpr unsigned maxPollFailures=3;
 int64_t deadline=0, nextPoll=0;
+int64_t storageStarted=0, copyStarted=0;
+int64_t fileReadMs=0, flashWriteMs=0;
+constexpr unsigned copyBurstPackets=32;
+constexpr int64_t copyBurstMs=3000;
 uint64_t notificationId=0;
 struct progress_notices {
     uint64_t queuedId=0;
@@ -139,10 +143,16 @@ bool wait_for_network(modem_t &modem, int rc)
 int read_block(modem_t &modem)
 {
     const size_t count=std::min<size_t>(chunk.size(),metadata.size-offset);
+    const int64_t reading=k_uptime_get();
     int rc=modem.file_read(imageFile,offset,{chunk.data(),count});
+    fileReadMs+=k_uptime_get()-reading;
     if (!rc && offset==0 && !ota_manifest::header_matches({chunk.data(),count},metadata)) rc=-ENOEXEC;
     if (!rc && psa_hash_update(&hash,chunk.data(),count)!=PSA_SUCCESS) rc=-EIO;
-    if (!rc) rc=firmware_update::write({chunk.data(),count});
+    if (!rc) {
+        const int64_t writing=k_uptime_get();
+        rc=firmware_update::write({chunk.data(),count});
+        flashWriteMs+=k_uptime_get()-writing;
+    }
     if (!rc) offset+=count;
     return rc;
 }
@@ -317,6 +327,8 @@ void http_update::process(modem_t &modem)
         announce_progress(modem,"Downloading firmware...");
         state=phase::image_wait;return;
     case phase::stage_prepare: {
+        storageStarted=k_uptime_get();
+        fileReadMs=flashWriteMs=0;
         uint32_t size;
         rc=modem.file_open();
         if(!rc) rc=modem.file_size(imageFile,size);
@@ -331,25 +343,37 @@ void http_update::process(modem_t &modem)
         rc=metadata.has_sha256?firmware_update::begin(metadata.size,metadata.sha256):firmware_update::begin(metadata.size);
         if(rc) {fail(modem,"prepare staging A",rc);return;}
         writerActive=true;offset=0;
+        copyStarted=k_uptime_get();
+        LOG_INF("OTA timing: storage preparation=%lld ms; copy burst up to %u KiB/%lld ms",
+                static_cast<long long>(copyStarted-storageStarted),copyBurstPackets,
+                static_cast<long long>(copyBurstMs));
         state=phase::copy;
         return;
     }
     case phase::copy: {
         int64_t started=k_uptime_get();
         unsigned oldPercent=static_cast<unsigned>(100ULL*offset/metadata.size);
-        for(unsigned packets=0;offset<metadata.size && packets<8 && k_uptime_get()-started<1000;++packets) {
+        // Amortize meter polling, background AT queries and the main-loop
+        // sleep over larger bursts. Keep 1 KiB UART frames and yield regularly.
+        for(unsigned packets=0;offset<metadata.size && packets<copyBurstPackets &&
+            k_uptime_get()-started<copyBurstMs;++packets) {
             rc=read_block(modem);
             if(rc) {fail(modem,"binary transfer to staging A",rc);return;}
         }
         unsigned percent=static_cast<unsigned>(100ULL*offset/metadata.size);
         if(percent/10!=oldPercent/10) LOG_INF("OTA staging: %u%% (%u/%u bytes)",percent,offset,metadata.size);
         if(offset==metadata.size) {
+            const int64_t elapsed=k_uptime_get()-copyStarted;
+            LOG_INF("OTA timing: staging copy=%lld ms, modem reads=%lld ms, flash writes=%lld ms, other=%lld ms",
+                static_cast<long long>(elapsed),static_cast<long long>(fileReadMs),
+                static_cast<long long>(flashWriteMs),static_cast<long long>(elapsed-fileReadMs-flashWriteMs));
             announce_progress(modem,"Firmware saved; checking signature...");
             state=phase::verify;
         } else periodic_progress(modem,"Saving firmware",percent,notices.storagePercent);
         return;
     }
     case phase::verify: {
+        const int64_t verifying=k_uptime_get();
         std::array<uint8_t,32> digest{};size_t count;
         if(psa_hash_finish(&hash,digest.data(),digest.size(),&count)!=PSA_SUCCESS || count!=digest.size()) {
             fail(modem,"SHA-256 finish",-EIO);return;
@@ -358,6 +382,8 @@ void http_update::process(modem_t &modem)
         // Finish checks readback/hash and the Ed25519 signature before arming.
         rc=firmware_update::finish(digest);
         if(rc) {fail(modem,"firmware verification",rc);return;}
+        LOG_INF("OTA timing: final verification=%lld ms; total storage phase=%lld ms",
+            static_cast<long long>(k_uptime_get()-verifying),static_cast<long long>(k_uptime_get()-storageStarted));
         writerActive=false;
         modem.https_cleanup(false);
         // An unsent optional update must not hold up the final reply/reboot.

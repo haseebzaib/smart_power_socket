@@ -15,6 +15,7 @@ static bool staged;
 static size_t expected;
 static std::vector<uint8_t> written;
 int64_t k_uptime_get() {return now;}
+void advance_file_read_time(int64_t ms) {now+=ms;}
 void sys_reboot(int) {++reboots;}
 namespace firmware_update {
 int ready_for_update() {return 0;}
@@ -146,6 +147,30 @@ int main(int argc,char **argv) {
     }
     assert(m.messages.back().text.starts_with("ERR OTA"));
     puts("PASS: optional OTA notices cannot exhaust reply capacity or cancel unrelated messages");
+
+    // Model 1 KiB modem reads with/without UART latency. The production loop
+    // must batch more work than before while still respecting its byte/time
+    // limits and yielding back to ordinary device monitoring.
+    for(int delay:{0,100,110}) {
+        m=initial;m.fileReadDelayMs=delay;finishError=-EACCES;
+        beginRequest();unsigned bursts=0;
+        for(int i=0;i<1000 && http_update::busy();++i) {
+            const auto before=written.size();const auto started=now;
+            tick(m);
+            if(written.size()>before) {
+                ++bursts;
+                assert(written.size()-before<=32*1024);
+                // The time budget is checked between bounded UART frames.
+                assert(now-started<=4000+delay);
+            }
+        }
+        const auto packets=(m.image.size()+1023)/1024;
+        const unsigned perBurst=delay?std::min(32,(3000+delay-1)/delay):32;
+        assert(!http_update::busy() && !reboots && written.size()==m.image.size());
+        assert(!memcmp(written.data(),m.image.data(),m.image.size()));
+        assert(bursts==(packets+perBurst-1)/perBurst && bursts<(packets+7)/8);
+    }
+    puts("PASS: larger staging bursts reduce main-loop round trips while retaining 1 KiB frames, exact contents and bounded yields");
 
     // Successful request waits for its own acknowledgement/completion SMS IDs.
     m=initial;finishError=0;m.statusFailures=2;beginRequest();

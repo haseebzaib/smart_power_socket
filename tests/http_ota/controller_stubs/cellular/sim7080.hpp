@@ -7,6 +7,7 @@
 #include <string_view>
 #include <vector>
 #include <zephyr/kernel.h>
+void advance_file_read_time(int64_t ms);
 namespace cellular {
 class sim7080 {
 public:
@@ -23,6 +24,7 @@ public:
     unsigned prepareWaits=0,imagePrepareWaits=0;
     int prepareWaitError=-EAGAIN;
     uint32_t advertisedExtra=0, progressSize=0;
+    int64_t fileReadDelayMs=0;
     uint64_t next=1;
     std::string active;
     bool send_sms(std::string_view,std::string_view body) {if(!can_queue_sms())return false;messages.push_back({next++,std::string(body),true,k_uptime_get(),false});return true;}
@@ -55,6 +57,7 @@ public:
     int file_close() {return 0;}
     int file_size(std::string_view name,uint32_t &n) {n=(name=="sps-ota.json"?manifest:image).size();return 0;}
     int file_read(std::string_view name,uint32_t off,std::span<uint8_t> out) {
+        advance_file_read_time(fileReadDelayMs);
         if(readError)return readError;const auto &bytes=name=="sps-ota.json"?manifest:image;
         if(off>bytes.size()||out.size()>bytes.size()-off)return -1;
         std::copy_n(bytes.data()+off,out.size(),out.data());return 0;

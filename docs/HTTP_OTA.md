@@ -175,6 +175,37 @@ steps, signature/readback result and reboot.
 
 ## Modem and verification limits
 
+The "saving firmware" interval includes authenticating/archiving the running
+image into backup B, erasing staging A, reading the downloaded file from the
+modem, programming A, and checking flash readback/signature. SMS timestamps
+include network submission/delivery delays, so they are not flash benchmarks.
+
+Image partitions now use aligned erase requests up to 64 KiB, with 4 KiB requests
+at non-block-aligned edges. The Zephyr NOR driver selects its supported erase
+command; requests never extend outside the partition. A 1 MiB image partition
+uses 16 block requests instead of 256 individual sector requests. MCUboot feeds
+its watchdog between requests. The [MX25R6435F datasheet](https://www.macronix.com/Lists/Datasheet/Attachments/8868/MX25R6435F%2C%20Wide%20Range%2C%2064Mb%2C%20v1.6.pdf)
+documents 64 KiB block erases with a 3.5-second maximum in ultra-low-power mode,
+below the 20-second boot watchdog period. Full partition/trailer clearing and
+the existing backup/journal checks are retained.
+
+The modem-to-flash copy uses the existing 1 KiB binary frames, batching up to
+32 frames per main-loop visit, checking a three-second budget between frames,
+instead of eight frames/one second. Meter polling, background AT queries, ordinary loop sleeps and SMS
+submissions still occur between visits; the larger batch amortizes their cost.
+The byte/time bounds keep the application returning to device monitoring.
+UART remains 115200 baud: about 324 kB of payload alone needs roughly 28 seconds
+at 8N1, before command, flash and scheduling overhead.
+
+`OTA timing:` logs report backup creation/reuse, staging erase, storage
+preparation, modem read time, flash-write time, other copy time, final verification
+and total storage time. "Other" includes hashing and time spent between copy
+visits, such as meter work, SMS submission and sleeping. Hardware timings are
+needed to quantify the speedup; faster initial erases and fewer main-loop round
+trips do not guarantee an exact OTA duration. The updater currently running on
+the device controls transfer speed, so these changes benefit updates performed
+after the optimized firmware is installed.
+
 The implementation follows the HTTP-to-filesystem/CFS approach in the supplied
 SPA reference, with strict binary framing. TLS 1.2 and host SNI are configured.
 The modem needs enough free filesystem space for the signed image and manifest;

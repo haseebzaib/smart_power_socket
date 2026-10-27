@@ -142,8 +142,17 @@ int sps_area_crc(const struct flash_area *area, uint32_t length, uint32_t *crc)
 }
 int sps_area_erase(const struct flash_area *area)
 {
-    for (uint32_t off = 0; off < area->fa_size; off += 4096) {
-        int rc = flash_area_erase(area, off, 4096);
+    if (area->fa_size % 4096 || area->fa_off % 4096) return -EINVAL;
+    // Let the SPI NOR driver select its supported 64 KiB block command on
+    // aligned image regions. Use 4 KiB at partition edges; never round outwards
+    // into another partition. One bounded request at a time keeps MCUboot's
+    // watchdog feed between erase operations (MX25R64 block max is 3.5 s).
+    for (uint32_t off = 0; off < area->fa_size;) {
+        const uint32_t remaining = area->fa_size - off;
+        const uint32_t count = ((area->fa_off + off) % 65536 == 0 && remaining >= 65536)
+            ? 65536 : 4096;
+        if (remaining < count) return -EINVAL;
+        int rc = flash_area_erase(area, off, count);
         if (rc) {
             LOG_ERR("Flash erase failed: area=0x%x offset=0x%x error=%d",
                     (unsigned)area->fa_off, (unsigned)off, rc);
@@ -152,6 +161,7 @@ int sps_area_erase(const struct flash_area *area)
 #if defined(CONFIG_MCUBOOT)
         sps_watchdog_feed();
 #endif
+        off += count;
     }
     return 0;
 }

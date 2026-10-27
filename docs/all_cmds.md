@@ -739,6 +739,11 @@ The same stale-transfer check runs once at MCU startup, even without an OTA
 command. An idle modem is not reset; uncertain startup HTTP state is recovered
 before ordinary modem polling and SMS submission resume.
 
+"Saving firmware" also includes backup/flash preparation before copy percentages
+begin. Storage timing logs separate backup, erase, modem reads, flash writes and
+verification. The copy uses larger bounded batches between ordinary device
+monitoring; elapsed SMS timestamps also include cellular delays.
+
 The BL54L15 profile uses `haseebzaib/SPS_OTA_UPDATE`, branch `main`, directory
 `dfu_application/`. A profile without `CONFIG_SPS_OTA_BASE_URL` returns
 `ERR OTA URL not configured`. The repository must host the standard manifest and

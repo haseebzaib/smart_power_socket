@@ -501,6 +501,9 @@ OTA 1.0.6+0 verified; rebooting to install</pre>
   job stops without repeatedly restarting the modem or restarting the MCU.</p>
   <p>Stale-transfer cleanup also runs automatically when the MCU starts, without
   waiting for an OTA command. A modem already idle is left running.</p>
+  <p>Saving firmware includes preparing the backup and flash before copy
+  percentages begin. Total time also includes cellular message delays. The
+  device logs separate storage timings for performance checks.</p>
   <p>The BL54L15 profile uses <code>haseebzaib/SPS_OTA_UPDATE</code>, branch
   <code>main</code>, folder <code>dfu_application/</code>. Upload the release files
   before testing. A profile without a configured URL replies ERR OTA URL not configured.
