@@ -100,7 +100,10 @@ resume yet.
 
 ## What the device does
 
-1. Require the current image's health check to have completed (`Health=OK/60s`).
+1. Check that the boot journal is available and no update is already active.
+   The startup health prerequisite is disabled (`Health=Off`); no 60-second wait
+   or pre-existing backup is required to accept the command. Backup creation
+   remains mandatory before erasing staging A; a failure aborts the update.
    Queue an acceptance SMS and wait for the modem to accept that specific reply.
 2. Use SIM7080 HTTPS to download `manifest.json` into the modem's filesystem.
    Check format version, package name, one application entry, board, SoC, linked

@@ -9,6 +9,11 @@ struct psa_hash_operation_t {EVP_MD_CTX *ctx;};
 #define PSA_HASH_OPERATION_INIT {nullptr}
 #define PSA_KEY_ATTRIBUTES_INIT {0}
 #define PSA_SUCCESS 0
+#define PSA_ERROR_INSUFFICIENT_MEMORY (-141)
+#define PSA_ERROR_HARDWARE_FAILURE (-147)
+#define PSA_ERROR_INVALID_SIGNATURE (-149)
+extern psa_status_t testPsaImportStatus;
+extern psa_status_t testPsaVerifyStatus;
 #define PSA_ALG_SHA_256 256
 #define PSA_ALG_SHA_512 512
 #define PSA_ALG_PURE_EDDSA 1

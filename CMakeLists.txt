@@ -32,6 +32,9 @@ if(CONFIG_BOOTLOADER_MCUBOOT)
   if(NOT CONFIG_TASK_WDT)
     message(FATAL_ERROR "The MCUboot carrier profile requires CONFIG_TASK_WDT. Include boards/bl54l15_dvk_nrf54l15_cpuapp.conf with prj.conf.")
   endif()
+  if(NOT CONFIG_MBEDTLS_ENABLE_HEAP OR CONFIG_MBEDTLS_HEAP_SIZE LESS 8192)
+    message(FATAL_ERROR "SPS OTA Ed25519 key import requires CONFIG_MBEDTLS_ENABLE_HEAP=y and CONFIG_MBEDTLS_HEAP_SIZE>=8192. Include the board configuration; libc heap/stack sizes do not initialize the Nordic crypto allocator.")
+  endif()
   target_sources(app PRIVATE
     src/ota/firmware_update.cpp
     src/ota/image_verify.cpp

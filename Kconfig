@@ -1,6 +1,17 @@
 mainmenu "Smart Power Socket"
 source "Kconfig.zephyr"
 
+config SPS_OTA_HEALTH_CHECK
+    bool "Require a healthy trial and verified backup before accepting OTA"
+    depends on BOOTLOADER_MCUBOOT
+    default n
+    help
+      Enable the timed startup health check and automatic backup provisioning.
+      Disabled for now: OTA commands have no startup health prerequisite.
+      The running image is still authenticated and backed up before staging
+      an update. The watchdog failure streak still clears after sustained
+      main-loop progress, independently of backup provisioning.
+
 config SPS_HTTP_OTA
     bool "SMS-controlled SIM7080 HTTPS firmware updates"
     default y if BOOTLOADER_MCUBOOT

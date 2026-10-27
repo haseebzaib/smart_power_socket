@@ -11,6 +11,7 @@ from pathlib import Path
 import yaml
 from intelhex import IntelHex
 from ota_key_info import inspect_build, verify_compiled_trust
+from verify_crypto_heap import verify_crypto_heap
 
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('build_dir', type=Path, nargs='?', default=Path('build-ota'))
@@ -44,6 +45,8 @@ app = build/'smart_power_socket/zephyr'
 boot = build/'mcuboot/zephyr'
 ac = config(app/'.config')
 bc = config(boot/'.config')
+crypto_heap_size = verify_crypto_heap(app/'.config', app/'zephyr.elf')
+print(f'PASS: Nordic PSA crypto heap {crypto_heap_size} bytes; initializer linked into POST_KERNEL startup')
 assert bc.get('CONFIG_FPROTECT') != 'y'
 assert bc.get('CONFIG_NCS_MCUBOOT_DISABLE_SELF_RWX') != 'y'
 assert bc['CONFIG_BOOT_SIGNATURE_TYPE_ED25519'] == 'y'

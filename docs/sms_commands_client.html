@@ -112,7 +112,7 @@ FW=1.0.1+0
 Run=Internal
 From=Backup B
 Backup=Ready
-Health=OK/60s
+Health=Off
 Boots=12 WDT=3
 Streak=0/3
 Recoveries=1
@@ -123,8 +123,8 @@ Update=Idle</pre>
   Backup B identifies firmware restored from the recovery copy; Updated means
   a different image was observed through OTA or SWD. Backup is Ready, None or Bad,
   checked again (including its signature against either project key) when this
-  command runs. Health is Wait/60s or OK/60s after one
-  minute of main-loop progress. Boots counts application starts; WDT counts
+  command runs. Health=Off means the startup health check is disabled; OTA has
+  no 60-second health wait. Boots counts application starts; WDT counts
   hardware or Zephyr task-watchdog resets. Streak is consecutive watchdog failures out of three.
   Recoveries counts completed restorations, and Last names the latest reason
   (Watchdog, Image or None). History remains after the streak clears.
@@ -489,9 +489,11 @@ OTA 1.0.6+0 verified; rebooting to install</pre>
   and its signature, waits for the modem to accept the completion SMS, then
   reboots to install. Failed downloads or checks return an ERR OTA reply without
   requesting an install reboot. Modem acceptance does not prove delivery.</p>
-  <p>Use <code>getotainfo</code> for progress. Only one update can run, and the
-  current firmware must show Health=OK/60s. A stages the update; B keeps the
-  previous healthy firmware for recovery. Settings retain their partition.</p>
+  <p>Use <code>getotainfo</code> for progress. Only one update can run. The startup
+  health check is disabled (Health=Off). A stages the update; B keeps the previous
+  firmware for recovery. Backup creation and signature checks still apply during
+  update preparation; failure stops the update before A is erased.
+  Settings retain their partition.</p>
   <p>The BL54L15 profile uses <code>haseebzaib/SPS_OTA_UPDATE</code>, branch
   <code>main</code>, folder <code>dfu_application/</code>. Upload the release files
   before testing. A profile without a configured URL replies ERR OTA URL not configured.

@@ -126,7 +126,11 @@ int sps_area_crc(const struct flash_area *area, uint32_t length, uint32_t *crc)
     for (uint32_t off = 0; off < length;) {
         size_t n = MIN(sizeof(buf), length - off);
         int rc = flash_area_read(area, off, buf, n);
-        if (rc) return rc;
+        if (rc) {
+            LOG_ERR("Flash CRC read failed: area=0x%x offset=0x%x length=%u error=%d",
+                    (unsigned)area->fa_off, (unsigned)off, (unsigned)n, rc);
+            return rc;
+        }
         value = crc32_ieee_update(value, buf, n);
         off += n;
 #if defined(CONFIG_MCUBOOT)
@@ -140,7 +144,11 @@ int sps_area_erase(const struct flash_area *area)
 {
     for (uint32_t off = 0; off < area->fa_size; off += 4096) {
         int rc = flash_area_erase(area, off, 4096);
-        if (rc) return rc;
+        if (rc) {
+            LOG_ERR("Flash erase failed: area=0x%x offset=0x%x error=%d",
+                    (unsigned)area->fa_off, (unsigned)off, rc);
+            return rc;
+        }
 #if defined(CONFIG_MCUBOOT)
         sps_watchdog_feed();
 #endif
@@ -152,7 +160,12 @@ int sps_image_copy(const struct flash_area *source, const struct flash_area *des
 {
     uint32_t actual;
     int rc = sps_area_crc(source, length, &actual);
-    if (rc || actual != expected_crc) return rc ? rc : -EBADMSG;
+    if (rc) return rc;
+    if (actual != expected_crc) {
+        LOG_ERR("Copy source CRC mismatch: area=0x%x expected=0x%x actual=0x%x",
+                (unsigned)source->fa_off, (unsigned)expected_crc, (unsigned)actual);
+        return -EBADMSG;
+    }
     if (length > dest->fa_size - 0x4000) return -EFBIG;
     rc = sps_area_erase(dest);
     if (rc) return rc;
@@ -160,16 +173,30 @@ int sps_image_copy(const struct flash_area *source, const struct flash_area *des
     for (uint32_t off = 0; off < length;) {
         size_t n = MIN(sizeof(buf), length - off);
         rc = flash_area_read(source, off, buf, n);
-        if (rc) return rc;
+        if (rc) {
+            LOG_ERR("Copy source read failed: area=0x%x offset=0x%x error=%d",
+                    (unsigned)source->fa_off, (unsigned)off, rc);
+            return rc;
+        }
         rc = flash_area_write(dest, off, buf, n);
-        if (rc) return rc;
+        if (rc) {
+            LOG_ERR("Copy destination write failed: area=0x%x offset=0x%x length=%u error=%d",
+                    (unsigned)dest->fa_off, (unsigned)off, (unsigned)n, rc);
+            return rc;
+        }
         off += n;
 #if defined(CONFIG_MCUBOOT)
         sps_watchdog_feed();
 #endif
     }
     rc = sps_area_crc(dest, length, &actual);
-    return rc ? rc : actual == expected_crc ? 0 : -EIO;
+    if (rc) return rc;
+    if (actual != expected_crc) {
+        LOG_ERR("Copy destination CRC mismatch: area=0x%x expected=0x%x actual=0x%x",
+                (unsigned)dest->fa_off, (unsigned)expected_crc, (unsigned)actual);
+        return -EIO;
+    }
+    return 0;
 }
 int sps_backup_verify(const struct sps_boot_state *state)
 {

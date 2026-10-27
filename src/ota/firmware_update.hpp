@@ -7,6 +7,8 @@ namespace firmware_update {
 int init();
 // Formats one <=160-character SMS. Returns length, or a negative errno.
 int format_info(std::span<char> output);
+// Optional startup trial; with the health gate off, only clears the watchdog
+// streak after sustained main-loop progress, without backup or crypto checks.
 void poll_health(bool settingsReady);
 int ready_for_update();
 int begin(std::size_t signedFileSize, std::span<const uint8_t, 32> expectedSha256);

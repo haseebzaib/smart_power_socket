@@ -13,13 +13,14 @@ limits and recovery of uncertain file sessions; see HTTP_OTA.md for deadlines.
 The CPU always executes the application from internal RRAM. External flash
 cannot be executed as an alternative A/B application on this carrier.
 
-1. Let the application complete one minute of main-loop progress with settings
-   initialized. The initial factory run saves its signed image to backup B.
+1. Initialize the boot journal. The startup health check is currently disabled
+   (`CONFIG_SPS_OTA_HEALTH_CHECK=n`); `getotainfo` shows `Health=Off`. OTA commands
+   have no startup health delay, and first-boot backup provisioning is skipped.
 2. The HTTPS controller (or a future BLE transport) calls the shared
    `firmware_update::begin()` writer.
-   This first archives the current healthy internal firmware into B and verifies
+   This first authenticates and archives the current internal firmware into B and verifies
    readback, then erases staging A. A previous backup is not overwritten just
-   because a newly installed image becomes healthy.
+   at application startup. A backup error aborts before A is erased.
 3. Feed the complete `zephyr.signed.bin` through sequential `write()` calls.
    Network retries must not replay an already accepted chunk. There is currently
    no interrupted-download resume protocol; call `abort()` and begin again.
@@ -34,8 +35,9 @@ cannot be executed as an alternative A/B application on this carrier.
    a download hash; both readback integrity and signature authentication apply.
 6. MCUboot swaps A with the internal primary using scratch storage. Its swap
    journal supports resuming an interrupted swap. B remains untouched.
-7. The application health check clears the watchdog failure streak after another
-   one minute. B continues to retain the previous healthy version until the
+7. Sustained main-loop progress clears the watchdog failure streak after another
+   one minute, independently of settings/backup verification while the health
+   check is disabled. This does not delay OTA. B retains the previous version until the
    next download begins.
 
 The writer API is in [firmware_update.hpp](../src/ota/firmware_update.hpp).
@@ -73,7 +75,7 @@ a separate external NVS journal:
   normal authenticated MCUboot installation path, including after the current
   firmware was previously accepted as healthy.
 - A non-watchdog reboot breaks the consecutive streak. One minute of completed
-  main-loop progress with working settings also clears it. The healthy interval
+  main-loop progress also clears it. This observation interval
   begins at the first completed loop, not merely at kernel startup.
 
 The application must keep this watchdog/health/update contract in future images.
@@ -94,16 +96,15 @@ fails in a completed/idle state, the recovery hook also attempts verified B.
 Ambiguous unfinished native swap metadata is preserved rather than overwritten.
 
 Journal or backup corruption is logged and prevents destructive recovery writes.
-The application health check also verifies B's signature against both trusted
-project keys. After a one-time SWD key transition, an intact SDK-signed B is
-reprovisioned from the newly healthy authenticated primary. Valid B images signed
-by either project key retain their normal previous-version lifetime.
-Recovery requires readable external flash and a valid backup. Before the initial
-one-minute factory health check, no previous image has been provisioned. The
-initial B image equals the factory image; a different previous version becomes
-available after the first update. Restoring an identical image cannot correct a
-bug already present in that same factory version. Hardware flash failure cannot
-be repaired by this software recovery mechanism.
+Startup backup verification/provisioning is currently disabled along with the
+OTA health prerequisite. The writer still authenticates the current image and
+copies it to B before erasing A during update preparation; this also replaces an
+old SDK-signed backup after a SWD key transition. `getotainfo` still verifies B
+when reporting its status, without making OTA acceptance wait for it.
+Recovery requires readable external flash and a valid backup. On a new board,
+B is first provisioned when an update is prepared. Before then, watchdog resets
+cannot restore an absent backup. Hardware flash failure cannot be repaired by
+this software recovery mechanism.
 
 ## Zephyr watchdog supervision
 
@@ -120,11 +121,13 @@ their parent's deadline, and progress during a scope cannot renew it indefinitel
 Other threads cannot refresh or extend the main channel; future critical workers
 need their own Zephyr task-watchdog channels.
 
-The healthy interval remains **60 seconds for testing**. To use five minutes in
-production, change `SPS_HEALTHY_MS` to `300000U` in
-`modules/sps_boot/src/sps_boot.h` and rebuild. This delay is separate from both the
-30-second task deadline and 20-second hardware fallback; after rollback the healthy
-interval comes from the restored firmware binary.
+The watchdog streak-clear interval remains **60 seconds for testing**. This
+does not gate OTA while `CONFIG_SPS_OTA_HEALTH_CHECK=n`. To restore the optional
+startup health/backup prerequisite, set it to `y` in the board configuration.
+`SPS_HEALTHY_MS` in `modules/sps_boot/src/sps_boot.h` controls both that optional
+trial and the independent watchdog streak-clear interval. These are separate
+from the 30-second task deadline and 20-second hardware fallback; after rollback
+the behavior comes from the restored firmware binary.
 
 ## Field status: `getotainfo`
 
@@ -150,6 +153,30 @@ A restored firmware image must contain `getotainfo` to answer that command.
 An older backup containing a previous firmware without it will not gain the
 command automatically. Origin `Updated` means a changed image fingerprint;
 it does not distinguish an OTA install from reprogramming the application by SWD.
+
+## Crypto allocation and backup diagnostics
+
+The app's Nordic PSA implementation imports Ed25519 public keys using the
+mbed TLS allocator. It requires `CONFIG_MBEDTLS_ENABLE_HEAP=y` and the configured
+8192-byte `CONFIG_MBEDTLS_HEAP_SIZE`; increasing the libc or task stacks does not
+initialize this allocator. The SDK initializes the crypto heap before `main()`.
+`verify_ota_build.py` checks both the configuration and the linked ELF heap/startup
+entry so a config-only change or stale image cannot hide a missing initializer.
+
+The earlier heap-disabled image used an allocator stub that always returned
+null. Key import could therefore fail with PSA `-141` (insufficient memory),
+which our verifier previously collapsed to `-5` (`EIO`). This was a firmware
+configuration defect; that error alone was not evidence of SPI flash failure.
+The startup health check remains disabled as requested; backup preparation and
+OTA signature checks still use the now-initialized allocator.
+
+Image authentication logs now name the crypto operation and original PSA status.
+Allocation errors return `-12` (`ENOMEM`), invalid signatures/untrusted keys return
+`-13` (`EACCES`), and other crypto errors retain their PSA status in the log.
+Backup creation names the failing step. Actual flash copy/erase/read/write errors
+log the partition address and relative offset; CRC mismatches show both CRCs.
+These diagnostics distinguish key/crypto failures from flash transport failures.
+
 
 ## Flash layout
 
@@ -266,14 +293,14 @@ Boot watchdog: 20 s, runs in sleep, pauses while debugger halted
 Zephyr task watchdog: main 30 s; hardware fallback 20 s
 Watchdog failure streak: 0/3; backup=not provisioned
 MCUboot: internal primary=1 MiB; external A=staging, B=known-good, each 1 MiB
-Saving known-good internal firmware to backup B (... bytes)
-Known-good backup B verified and committed
-Firmware healthy: watchdog streak cleared; known-good backup B retained
+Watchdog streak cleared after sustained main-loop progress; OTA health check disabled
 ```
 
 Download/recovery milestones:
 
 ```text
+Saving known-good internal firmware to backup B (... bytes)
+Known-good backup B verified and committed
 OTA ready: signed file ... bytes, staging A; backup B protected
 OTA SHA-256, readback and Ed25519 signature verified; reboot ready
 Watchdog failure streak: 3/3; backup=available
@@ -284,14 +311,14 @@ Known-good firmware restored; journal result=0
 Builds and simulated recovery tests are not hardware qualification. On the carrier:
 
 1. Install the merged factory image; verify JEDEC/settings logs and both boot
-   stages. Wait for the healthy/backup messages. Confirm existing settings survive.
+   stages. Confirm `Health=Off`, working settings, and that OTA has no health wait.
 2. Check normal cellular startup, SMS waits and meter retries for false watchdog
    resets. Disable/leave the debugger running during timeout tests; a halted
    debugger pauses the watchdog.
 3. Use a separate test image to intentionally stop main-thread progress without
    reporting progress. Confirm ~30-second task-watchdog resets (or a 20-second
    hardware reset if the CPU/interrupts stop), counts 1 then 2 then 3, and recovery to
-   the previous version. Repeat after the updated image first passes health.
+   the previous version. Repeat after the updated image clears its watchdog streak.
 4. Use the HTTPS command with an incremented signed release. Check that a wrong
    manifest version, truncation or invalid signature is rejected before reboot,
    and a correct release installs. See HTTP_OTA.md for the full first-unit checks.

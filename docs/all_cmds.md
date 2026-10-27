@@ -116,7 +116,7 @@ FW=1.0.1+0
 Run=Internal
 From=Backup B
 Backup=Ready
-Health=OK/60s
+Health=Off
 Boots=12 WDT=3
 Streak=0/3
 Recoveries=1
@@ -136,16 +136,17 @@ Update=Idle
 - `Backup`: `Ready` means B's header, length, stored CRC and signature against
   either project public key pass a fresh readback check; `None` means no backup has been provisioned; `Bad` means verification
   failed. MCUboot performs cryptographic authentication before installation.
-- `Health`: `Wait/60s` while the current boot is being observed; `OK/60s` after
-  one minute of main-loop progress with initialized settings and verified backup.
-  The interval starts after the first completed loop, not at power-on.
+- `Health=Off`: the startup health check is currently disabled; OTA has no
+  60-second health prerequisite. Backup creation and signature verification
+  remain mandatory when preparing an update. If explicitly re-enabled with
+  `CONFIG_SPS_OTA_HEALTH_CHECK=y`, the field uses `Wait/60s` and `OK/60s`.
 - `Boots`: cumulative application handoffs, including the first start and power
   cycles. MCUboot's internal recovery housekeeping reboots are excluded.
 - `WDT`: cumulative hardware or Zephyr task-watchdog resets observed by the bootloader, including faults
   before `main()`. `Streak` is the current consecutive failure count / limit.
 - `Recoveries`: completed restorations from B; `Last` is the most recent completed
   recovery reason: `Watchdog`, `Image` (boot/image validation failure), or `None`.
-  These history fields persist after the health check clears `Streak`.
+  These history fields persist after sustained main-loop progress clears `Streak`.
 - `Update`: `Idle`, `Checking`, `Manifest`, `Download`, `Stage`, `Verify`,
   `Pending` (verified; waiting for completion SMS/reboot), `Failed`, or `Recovery`.
 
@@ -721,9 +722,11 @@ Progress is best-effort: one optional notice at most is queued, old unsent stage
 are superseded, and terminal replies take priority. Progress delivery is not required for the update to continue, and the final
 verified/error reply remains essential.
 
-Use `getotainfo` to check progress. Only one update runs at a time; the current
-image must have reached `Health=OK/60s`. Settings remain in their existing external
-partition. Staging uses A after preserving the healthy running firmware in B.
+Use `getotainfo` to check progress. Only one update runs at a time. The startup
+health check is disabled (`Health=Off`); there is no health wait before requesting
+OTA. Settings remain in their existing external partition. Staging uses A after
+authenticating and preserving the running firmware in B. A backup failure still
+aborts the update before A is erased.
 The application always executes internally; lifetime rollback still uses B after
 three consecutive watchdog failures.
 

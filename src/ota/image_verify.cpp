@@ -5,7 +5,18 @@
 #include <cerrno>
 #include <cstring>
 #include <psa/crypto.h>
+#include <zephyr/logging/log.h>
 #include <zephyr/sys/byteorder.h>
+LOG_MODULE_REGISTER(image_verify, LOG_LEVEL_INF);
+namespace {
+int crypto_error(const char *step, psa_status_t status)
+{
+    LOG_ERR("Image authentication: %s failed; PSA status=%d", step, static_cast<int>(status));
+    if (status == PSA_ERROR_INSUFFICIENT_MEMORY) return -ENOMEM;
+    if (status == PSA_ERROR_INVALID_SIGNATURE) return -EACCES;
+    return -EIO;
+}
+}
 
 int verify_update_signature(const flash_area *area, uint32_t length)
 {
@@ -54,31 +65,47 @@ int verify_update_signature(const flash_area *area, uint32_t length)
     for (const auto &candidate : ota_public_key::trusted) {
         if (candidate.hash == keyHash) { trusted = &candidate; break; }
     }
-    if (!trusted) return -EACCES;
+    if (!trusted) {
+        LOG_ERR("Image authentication: signing key is outside the project trust set");
+        return -EACCES;
+    }
     size_t n=0;
     psa_hash_operation_t hash=PSA_HASH_OPERATION_INIT;
-    if (psa_hash_setup(&hash,PSA_ALG_SHA_512)!=PSA_SUCCESS) return -EIO;
+    auto status=psa_hash_setup(&hash,PSA_ALG_SHA_512);
+    if (status!=PSA_SUCCESS) return crypto_error("SHA-512 setup", status);
     std::array<uint8_t,1024> chunk{};
     for (uint32_t pos=0;pos<protectedEnd;) {
         size_t count=std::min<size_t>(chunk.size(),protectedEnd-pos);
         rc=flash_area_read(area,pos,chunk.data(),count);
-        if (!rc && psa_hash_update(&hash,chunk.data(),count)!=PSA_SUCCESS) rc=-EIO;
+        if (!rc) {
+            status=psa_hash_update(&hash,chunk.data(),count);
+            if (status!=PSA_SUCCESS) rc=crypto_error("SHA-512 update", status);
+        }
         if (rc) { psa_hash_abort(&hash); return rc; }
         pos+=count;
     }
-    if (psa_hash_finish(&hash,actualDigest.data(),actualDigest.size(),&n)!=PSA_SUCCESS || n!=actualDigest.size()) {
-        psa_hash_abort(&hash); return -EIO;
+    status=psa_hash_finish(&hash,actualDigest.data(),actualDigest.size(),&n);
+    if (status!=PSA_SUCCESS || n!=actualDigest.size()) {
+        psa_hash_abort(&hash);
+        if (status!=PSA_SUCCESS) return crypto_error("SHA-512 finish", status);
+        LOG_ERR("Image authentication: SHA-512 digest length=%u, expected 64", static_cast<unsigned>(n));
+        return -EIO;
     }
-    if (actualDigest!=expectedDigest) return -EACCES;
+    if (actualDigest!=expectedDigest) {
+        LOG_ERR("Image authentication: SHA-512 digest mismatch");
+        return -EACCES;
+    }
     psa_key_attributes_t attributes=PSA_KEY_ATTRIBUTES_INIT;
     psa_set_key_type(&attributes,PSA_KEY_TYPE_ECC_PUBLIC_KEY(PSA_ECC_FAMILY_TWISTED_EDWARDS));
     psa_set_key_usage_flags(&attributes,PSA_KEY_USAGE_VERIFY_MESSAGE);
     psa_set_key_algorithm(&attributes,PSA_ALG_PURE_EDDSA);
     psa_key_id_t key;
-    auto status=psa_import_key(&attributes,trusted->raw.data(),trusted->raw.size(),&key);
+    status=psa_import_key(&attributes,trusted->raw.data(),trusted->raw.size(),&key);
     psa_reset_key_attributes(&attributes);
-    if (status!=PSA_SUCCESS) return -EIO;
+    if (status!=PSA_SUCCESS) return crypto_error("Ed25519 public-key import", status);
     status=psa_verify_message(key,PSA_ALG_PURE_EDDSA,actualDigest.data(),actualDigest.size(),signature.data(),signature.size());
     auto destroyed=psa_destroy_key(key);
-    return status==PSA_SUCCESS && destroyed==PSA_SUCCESS ? 0 : -EACCES;
+    if (status!=PSA_SUCCESS) return crypto_error("Ed25519 signature verification", status);
+    if (destroyed!=PSA_SUCCESS) return crypto_error("Ed25519 key cleanup", destroyed);
+    return 0;
 }

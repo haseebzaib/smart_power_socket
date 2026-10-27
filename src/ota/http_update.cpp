@@ -158,7 +158,12 @@ const char *http_update::request_error(int code)
     case -EINVAL:return "ERR OTA use ota=1.0.1 or ota=1.0.1+0";
     case -ENOTCONN:return "ERR OTA URL not configured";
     case -EADDRNOTAVAIL:return "ERR OTA URL configuration invalid";
-    case -EAGAIN:return "ERR OTA not ready; wait for Health=OK in getotainfo";
+    case -EAGAIN:
+#if defined(CONFIG_SPS_OTA_HEALTH_CHECK)
+        return "ERR OTA not ready; wait for Health=OK in getotainfo";
+#else
+        return "ERR OTA not ready; boot journal unavailable";
+#endif
     case -EBUSY:return "ERR OTA another update is active or pending";
     case -EALREADY:return "ERR OTA requested version is already running";
     default:return "ERR OTA could not queue request";

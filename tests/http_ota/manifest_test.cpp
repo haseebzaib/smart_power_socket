@@ -1,6 +1,8 @@
 #include "ota/manifest.hpp"
 #include "ota/image_verify.hpp"
 #include <zephyr/sys/byteorder.h>
+#include <psa/crypto.h>
+#include <cerrno>
 #include <cassert>
 #include <cstdio>
 #include <cstring>
@@ -55,6 +57,18 @@ int main(int argc,char **argv) {
     puts("PASS: actual SDK manifest/version/header accepted; wrong target/version/slot/path and malformed manifests rejected");
     flash_area area{reinterpret_cast<const uint8_t *>(bytes.data()),bytes.size()};
     assert(!verify_update_signature(&area,bytes.size()));
+    testPsaImportStatus=PSA_ERROR_INSUFFICIENT_MEMORY;
+    assert(verify_update_signature(&area,bytes.size())==-ENOMEM);
+    testPsaImportStatus=PSA_ERROR_HARDWARE_FAILURE;
+    assert(verify_update_signature(&area,bytes.size())==-EIO);
+    testPsaImportStatus=PSA_SUCCESS;
+    testPsaVerifyStatus=PSA_ERROR_INSUFFICIENT_MEMORY;
+    assert(verify_update_signature(&area,bytes.size())==-ENOMEM);
+    testPsaVerifyStatus=PSA_ERROR_HARDWARE_FAILURE;
+    assert(verify_update_signature(&area,bytes.size())==-EIO);
+    testPsaVerifyStatus=PSA_SUCCESS;
+    assert(!verify_update_signature(&area,bytes.size()));
+    puts("PASS: PSA key-allocation/resource failures remain distinct from invalid signatures and flash I/O");
     bytes[0x840]^=1;assert(verify_update_signature(&area,bytes.size())<0);bytes[0x840]^=1;
     bytes.back()^=1;assert(verify_update_signature(&area,bytes.size())<0);bytes.back()^=1;
     auto pos=0x800+sys_get_le32(area.data+12)+sys_get_le16(area.data+10)+4;

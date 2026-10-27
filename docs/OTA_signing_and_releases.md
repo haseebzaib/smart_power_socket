@@ -124,11 +124,14 @@ example key. They are historical artifacts, not the starting firmware for the
 new key setup. Those old bootloaders do not trust the new project keys, and the
 new bootloader/app deliberately reject old SDK-signed images.
 
-The first healthy run verifies backup B's signature too. If B is intact but
-signed outside this new trust set, the app reprovisions B from the newly healthy,
-authenticated internal image. External settings/calibration retain their own
-partition. Wait for `Health=OK/60s` and `Backup=Ready` in `getotainfo` before OTA.
-A valid B signed by either project key is retained through normal health checks.
+The startup health check and automatic first-boot backup provisioning are
+currently disabled (`CONFIG_SPS_OTA_HEALTH_CHECK=n`, `Health=Off`). OTA can be
+requested without a health wait or a pre-existing backup. During update
+preparation, the app authenticates the running image and archives it to B before
+erasing staging A; an old SDK-signed B is replaced then. Backup/flash failures
+still abort the update. External settings/calibration retain their own partition.
+Re-enabling the optional health check restores startup backup verification and
+the timed health prerequisite.
 
 ## Firmware version and publishing
 

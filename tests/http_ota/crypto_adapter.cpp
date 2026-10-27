@@ -1,5 +1,7 @@
 // Host adapter runs real SHA-256/SHA-512/Ed25519 via OpenSSL, not crypto mocks.
 #include <psa/crypto.h>
+psa_status_t testPsaImportStatus=PSA_SUCCESS;
+psa_status_t testPsaVerifyStatus=PSA_SUCCESS;
 int psa_hash_setup(psa_hash_operation_t *op,int alg) {
     op->ctx=EVP_MD_CTX_new();
     return op->ctx && EVP_DigestInit_ex(op->ctx,alg==256?EVP_sha256():EVP_sha512(),nullptr)==1?0:-1;
@@ -18,13 +20,15 @@ int psa_hash_compute(int alg,const uint8_t *p,size_t n,uint8_t *out,size_t cap,s
     psa_hash_abort(&op);return rc;
 }
 int psa_import_key(psa_key_attributes_t *,const uint8_t *p,size_t n,psa_key_id_t *id) {
+    if (testPsaImportStatus!=PSA_SUCCESS) return testPsaImportStatus;
     auto key=EVP_PKEY_new_raw_public_key(EVP_PKEY_ED25519,nullptr,p,n);
     *id=reinterpret_cast<uintptr_t>(key);return key?0:-1;
 }
 int psa_verify_message(psa_key_id_t id,int,const uint8_t *p,size_t n,const uint8_t *sig,size_t len) {
+    if (testPsaVerifyStatus!=PSA_SUCCESS) return testPsaVerifyStatus;
     auto ctx=EVP_MD_CTX_new();
     int rc=EVP_DigestVerifyInit(ctx,nullptr,nullptr,nullptr,reinterpret_cast<EVP_PKEY *>(id));
     if(rc==1) rc=EVP_DigestVerify(ctx,sig,len,p,n);
-    EVP_MD_CTX_free(ctx);return rc==1?0:-1;
+    EVP_MD_CTX_free(ctx);return rc==1?PSA_SUCCESS:PSA_ERROR_INVALID_SIGNATURE;
 }
 int psa_destroy_key(psa_key_id_t id) {EVP_PKEY_free(reinterpret_cast<EVP_PKEY *>(id));return 0;}

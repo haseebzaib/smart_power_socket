@@ -19,6 +19,11 @@
 LOG_MODULE_REGISTER(firmware_update, LOG_LEVEL_INF);
 namespace {
 K_MUTEX_DEFINE(updateMutex);
+#if defined(CONFIG_SPS_OTA_HEALTH_CHECK)
+constexpr bool healthCheckEnabled = true;
+#else
+constexpr bool healthCheckEnabled = false;
+#endif
 bool ready, active, healthy, scheduled, expectedHashKnown;
 int64_t healthySince = -1;
 std::size_t expectedSize, receivedSize;
@@ -30,13 +35,24 @@ int backup_current(sps_boot_state &state)
 {
     const flash_area *primary, *backup;
     int rc = flash_area_open(PM_MCUBOOT_PRIMARY_ID, &primary);
-    if (rc) return rc;
+    if (rc) {
+        LOG_ERR("Backup B creation: opening internal primary failed: %d", rc);
+        return rc;
+    }
+    const char *step = "opening external backup";
     rc = flash_area_open(PM_OTA_IMAGE_B_ID, &backup);
     if (!rc) {
         uint32_t length, crc;
+        step = "reading internal image header";
         rc = sps_image_length(primary, &length);
-        if (!rc) rc = verify_update_signature(primary, length);
-        if (!rc) rc = sps_area_crc(primary, length, &crc);
+        if (!rc) {
+            step = "authenticating internal image";
+            rc = verify_update_signature(primary, length);
+        }
+        if (!rc) {
+            step = "reading internal image CRC";
+            rc = sps_area_crc(primary, length, &crc);
+        }
         // Do not erase B if it already contains this exact healthy image.
         if (!rc && state.backup_valid && state.backup_length == length &&
             state.backup_crc == crc && sps_backup_verify(&state) == 0) {
@@ -46,22 +62,26 @@ int backup_current(sps_boot_state &state)
         }
         if (!rc) {
             state.backup_valid = 0;
+            step = "saving backup-in-progress journal";
             rc = sps_boot_state_save(&state);
         }
         if (!rc) {
             LOG_INF("Saving known-good internal firmware to backup B (%u bytes)", length);
+            step = "copying internal image to external flash";
             rc = sps_image_copy(primary, backup, length, crc);
         }
         if (!rc) {
             state.backup_length = length;
             state.backup_crc = crc;
             state.backup_valid = 1;
+            step = "committing verified backup journal";
             rc = sps_boot_state_save(&state);
         }
         flash_area_close(backup);
     }
     flash_area_close(primary);
     if (!rc) LOG_INF("Known-good backup B verified and committed");
+    else LOG_ERR("Backup B creation failed at %s: %d", step, rc);
     return rc;
 }
 int verify_backup(const sps_boot_state &state)
@@ -90,8 +110,8 @@ int firmware_update::init()
     ready = rc == 0;
     if (!rc) {
         LOG_INF("MCUboot: internal primary=1 MiB; external A=staging, B=known-good, each 1 MiB");
-        LOG_INF("Recovery: %u/3 watchdog failures; healthy after %u s of main-loop progress; backup=%s",
-                state.failures, static_cast<unsigned>(SPS_HEALTHY_MS / 1000U),
+        LOG_INF("Recovery: %u/3 watchdog failures; OTA health check=%s; backup=%s",
+                state.failures, healthCheckEnabled ? "enabled" : "disabled",
                 state.backup_valid ? "available" : "not provisioned");
     } else LOG_ERR("OTA journal unavailable: %d; updates disabled", rc);
     return rc;
@@ -117,21 +137,24 @@ int firmware_update::format_info(std::span<char> output)
 #if defined(CONFIG_SPS_HTTP_OTA)
     if (state.recovery == SPS_RECOVERY_IDLE && http_update::busy()) update = http_update::phase_name();
 #endif
+    char health[24];
+    if constexpr (healthCheckEnabled)
+        std::snprintf(health, sizeof(health), "%s/%us", state.healthy ? "OK" : "Wait",
+                      static_cast<unsigned>(SPS_HEALTHY_MS / 1000U));
+    else std::snprintf(health, sizeof(health), "Off");
     int n = std::snprintf(output.data(), output.size(),
-        "OTA\nFW=%s\nRun=Internal\nFrom=%s\nBackup=%s\nHealth=%s/%us\nBoots=%u WDT=%u\n"
+        "OTA\nFW=%s\nRun=Internal\nFrom=%s\nBackup=%s\nHealth=%s\nBoots=%u WDT=%u\n"
         "Streak=%u/3\nRecoveries=%u\nLast=%s\nUpdate=%s",
-        APP_VERSION_TWEAK_STRING, source, backup, state.healthy ? "OK" : "Wait",
-        static_cast<unsigned>(SPS_HEALTHY_MS / 1000U),
+        APP_VERSION_TWEAK_STRING, source, backup, health,
         static_cast<unsigned>(history.app_boots), static_cast<unsigned>(history.watchdog_resets),
         static_cast<unsigned>(state.failures), static_cast<unsigned>(history.recoveries), reason, update);
     if (n > 160) {
         // Preserve the full image version and exact counters even when long
         // versions/cumulative counts need compact labels to fit one SMS.
         n = std::snprintf(output.data(), output.size(),
-            "FW=%s\nRun=Int\nFrom=%s\nB=%s\nHealth=%s/%us\nBoots=%u WDT=%u\n"
+            "FW=%s\nRun=Int\nFrom=%s\nB=%s\nHealth=%s\nBoots=%u WDT=%u\n"
             "Streak=%u/3\nRec=%u\nLast=%s\nUpd=%s",
-            APP_VERSION_TWEAK_STRING, source, backup, state.healthy ? "OK" : "Wait",
-            static_cast<unsigned>(SPS_HEALTHY_MS / 1000U),
+            APP_VERSION_TWEAK_STRING, source, backup, health,
             static_cast<unsigned>(history.app_boots), static_cast<unsigned>(history.watchdog_resets),
             static_cast<unsigned>(state.failures), static_cast<unsigned>(history.recoveries), reason, update);
     }
@@ -140,8 +163,8 @@ int firmware_update::format_info(std::span<char> output)
 void firmware_update::poll_health(bool settingsReady)
 {
     if (k_mutex_lock(&updateMutex, K_NO_WAIT)) return;
-    if (!ready || healthy || active || scheduled || !settingsReady) {
-        if (!settingsReady) healthySince = -1;
+    if (!ready || healthy || active || scheduled || (healthCheckEnabled && !settingsReady)) {
+        if (healthCheckEnabled && !settingsReady) healthySince = -1;
         k_mutex_unlock(&updateMutex);
         return;
     }
@@ -152,22 +175,20 @@ void firmware_update::poll_health(bool settingsReady)
         sps_boot_state state;
         int rc = sps_boot_state_load(&state);
         if (!rc && state.recovery != SPS_RECOVERY_IDLE) rc = -EBUSY;
-        // Provision the first factory backup only. After an update, preserve
-        // the previous version in B until the NEXT download begins.
-        if (!rc && state.backup_valid) {
-            rc = verify_backup(state);
-            if (rc == -EACCES) {
-                // A first SWD installation of project keys can retain an old
-                // SDK-signed B. Reprovision it from the newly healthy primary;
-                // keep valid backups signed by either project key unchanged.
-                LOG_WRN("Backup B is outside the current signature trust set; reprovisioning from healthy primary");
-                state.backup_valid = 0;
-                rc = sps_boot_state_save(&state);
+        if constexpr (healthCheckEnabled) {
+            // Preserve the previous version in B until the NEXT update begins.
+            if (!rc && state.backup_valid) {
+                rc = verify_backup(state);
+                if (rc == -EACCES) {
+                    LOG_WRN("Backup B is outside the current signature trust set; reprovisioning from healthy primary");
+                    state.backup_valid = 0;
+                    rc = sps_boot_state_save(&state);
+                }
             }
+            if (!rc && !state.backup_valid) rc = backup_current(state);
+            if (!rc) rc = verify_backup(state);
+            if (!rc) rc = boot_write_img_confirmed();
         }
-        if (!rc && !state.backup_valid) rc = backup_current(state);
-        if (!rc) rc = verify_backup(state);
-        if (!rc) rc = boot_write_img_confirmed();
         if (!rc) {
             state.failures = 0;
             state.healthy = 1;
@@ -175,9 +196,12 @@ void firmware_update::poll_health(bool settingsReady)
         }
         if (!rc) {
             healthy = true;
-            LOG_INF("Firmware healthy: watchdog streak cleared; known-good backup B retained");
+            if constexpr (healthCheckEnabled)
+                LOG_INF("Firmware healthy: watchdog streak cleared; known-good backup B retained");
+            else LOG_INF("Watchdog streak cleared after sustained main-loop progress; OTA health check disabled");
         } else {
-            LOG_ERR("Firmware health commit failed: %d; retry in 30 s", rc);
+            LOG_ERR("%s commit failed: %d; retry in 30 s",
+                    healthCheckEnabled ? "Firmware health" : "Watchdog streak", rc);
             healthySince = now - SPS_HEALTHY_MS + 30000;
         }
     }
@@ -187,12 +211,12 @@ static int prepare_download(std::size_t size, const uint8_t *sha256)
 {
     app_watchdog::operation allowance{app_watchdog::flashTimeoutMs, "OTA prepare"};
     lock guard;
-    if (!ready || !healthy) return -EAGAIN;
+    if (!ready || (healthCheckEnabled && !healthy)) return -EAGAIN;
     if (active || scheduled) return -EBUSY;
     if (!size || size > PM_MCUBOOT_SECONDARY_SIZE - 0x4000) return -EFBIG;
     sps_boot_state state;
     int rc = sps_boot_state_load(&state);
-    if (!rc && (!state.healthy || state.recovery != SPS_RECOVERY_IDLE)) rc = -EBUSY;
+    if (!rc && ((healthCheckEnabled && !state.healthy) || state.recovery != SPS_RECOVERY_IDLE)) rc = -EBUSY;
     // Save the running healthy version BEFORE allowing A to be overwritten.
     if (!rc) rc = backup_current(state);
     if (!rc) rc = flash_area_open(PM_MCUBOOT_SECONDARY_ID, &staging);
@@ -274,7 +298,7 @@ void firmware_update::abort()
 int firmware_update::ready_for_update()
 {
     lock guard;
-    if (!ready || !healthy) return -EAGAIN;
+    if (!ready || (healthCheckEnabled && !healthy)) return -EAGAIN;
     if (active || scheduled) return -EBUSY;
     return 0;
 }
