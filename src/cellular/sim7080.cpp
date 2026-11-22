@@ -57,6 +57,8 @@ namespace cellular
         }
 
         LOG_INF("GSM Init Started");
+        k_msleep(4000);
+        pwr_key_pulse();
 
         // First allow an already-on or still-booting modem to wake and answer.
         // PWRKEY is a state-changing input, so only pulse it after this grace
